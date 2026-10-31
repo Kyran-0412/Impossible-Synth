@@ -233,10 +233,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ImpossibleSynthProcessor::cr
 
         if constexpr (std::is_same_v<std::decay_t<decltype (value)>, int>)
         {
-            if (juce::String (id) == "on")
-                layout.add (std::make_unique<juce::AudioParameterBool> (pid, name, value != 0));
-            else
-                layout.add (std::make_unique<juce::AudioParameterChoice> (pid, name, spec.choices, value));
+            // Choice parameters snap to whole options, so they always save and restore exactly
+            // (on/off switches are Off/On choices for the same reason).
+            layout.add (std::make_unique<juce::AudioParameterChoice> (pid, name, spec.choices, value));
         }
         else
         {
