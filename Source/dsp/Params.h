@@ -1,0 +1,244 @@
+#pragma once
+
+// Every synth setting, in one place. Plain C++ (no JUCE) so the engine,
+// presets and offline tests all share it. The plugin builds its parameter
+// list from the IDs, ranges and defaults defined here.
+
+#include <array>
+#include <cmath>
+
+namespace impossible
+{
+
+constexpr int kNumLfos = 2;
+constexpr int kNumModSlots = 6;
+constexpr int kMaxUnison = 7;
+
+enum Exciter { kStrike, kPluck, kBow, kBreath, kOsc, kNumExciters };
+enum FilterMode { kFilterOff, kFilterLP, kFilterBP, kFilterHP, kFilterNotch, kNumFilterModes };
+enum LfoShape { kLfoSine, kLfoTriangle, kLfoSawUp, kLfoSawDown, kLfoSquare, kLfoSampleHold, kLfoDrift, kNumLfoShapes };
+
+enum ModSource
+{
+    kSrcOff, kSrcLfo1, kSrcLfo2, kSrcEnv, kSrcVelocity, kSrcModWheel, kSrcNote, kSrcRandom,
+    kNumSources
+};
+
+enum ModTarget
+{
+    kDstOff, kDstPitch, kDstVolume,
+    kDstHardness, kDstPosition, kDstShape, kDstMaterial, kDstSize, kDstDecay,
+    kDstBloom, kDstDrift, kDstTransmute, kDstFracture,
+    kDstOscWave, kDstDetune, kDstBody, kDstCutoff, kDstResonance, kDstDrive,
+    kNumTargets
+};
+
+inline const char* const kExciterNames[kNumExciters] = { "Strike", "Pluck", "Bow", "Breath", "Osc" };
+inline const char* const kFilterModeNames[kNumFilterModes] = { "Off", "Low Pass", "Band Pass", "High Pass", "Notch" };
+inline const char* const kLfoShapeNames[kNumLfoShapes] = { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Drift" };
+inline const char* const kSourceNames[kNumSources] = { "Off", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Random" };
+inline const char* const kTargetNames[kNumTargets] = {
+    "Off", "Pitch", "Volume", "Hardness", "Position", "Shape", "Material", "Size", "Decay",
+    "Bloom", "Drift", "Transmute", "Fracture", "Osc Wave", "Detune", "Body", "Cutoff", "Resonance", "Drive"
+};
+inline const char* const kOctaveNames[5] = { "-2", "-1", "0", "+1", "+2" };
+inline const char* const kUnisonNames[kMaxUnison] = { "1", "2", "3", "4", "5", "6", "7" };
+inline const char* const kRetrigNames[2] = { "Free", "Retrig" };
+
+// LFO tempo sync: "Free" uses the Rate knob, the rest lock to the host tempo.
+constexpr int kNumSyncOptions = 13;
+inline const char* const kSyncNames[kNumSyncOptions] = {
+    "Free", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32", "1/4 T", "1/8 T", "1/16 T", "1/8 D"
+};
+inline const double kSyncBeats[kNumSyncOptions] = {
+    0.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0, 0.75
+};
+
+// A value range. With centre > min, the knob is skewed so the centre value sits
+// in the middle (same maths as JUCE's NormalisableRange::setSkewForCentre).
+struct Range
+{
+    float min, max, centre = -1.0f;
+
+    bool skewed() const { return centre > min; }
+    float skew() const { return std::log (0.5f) / std::log ((centre - min) / (max - min)); }
+
+    float toNorm (float v) const
+    {
+        const float n = (v - min) / (max - min);
+        if (n <= 0.0f) return 0.0f;
+        if (n >= 1.0f) return 1.0f;
+        return skewed() ? std::exp (std::log (n) * skew()) : n;
+    }
+
+    float fromNorm (float n) const
+    {
+        n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
+        if (skewed() && n > 0.0f)
+            n = std::exp (std::log (n) / skew());
+        return min + (max - min) * n;
+    }
+};
+
+namespace ranges
+{
+inline constexpr Range hardness { 0.0f, 1.0f };
+inline constexpr Range position { 0.02f, 0.5f };
+inline constexpr Range attack { 0.001f, 10.0f, 0.3f };
+inline constexpr Range oscWave { 0.0f, 1.0f };
+inline constexpr Range detune { 0.0f, 1.0f };
+inline constexpr Range shape { 0.0f, 1.0f };
+inline constexpr Range material { 0.0f, 1.0f };
+inline constexpr Range size { 0.0f, 1.0f };
+inline constexpr Range decay { 0.1f, 10.0f, 1.0f };
+inline constexpr Range release { 0.02f, 10.0f, 1.0f };
+inline constexpr Range bloom { 0.0f, 1.0f };
+inline constexpr Range drift { -1.0f, 1.0f };
+inline constexpr Range transmute { -1.0f, 1.0f };
+inline constexpr Range fracture { 0.0f, 1.0f };
+inline constexpr Range evolve { 0.05f, 10.0f, 1.5f };
+inline constexpr Range cutoff { 20.0f, 20000.0f, 1000.0f };
+inline constexpr Range resonance { 0.0f, 1.0f };
+inline constexpr Range filterEnv { -1.0f, 1.0f };
+inline constexpr Range drive { 0.0f, 1.0f };
+inline constexpr Range body { 0.0f, 1.0f };
+inline constexpr Range lfoRate { 0.01f, 40.0f, 2.0f };
+inline constexpr Range envAttack { 0.001f, 10.0f, 0.3f };
+inline constexpr Range envDecay { 0.005f, 10.0f, 0.5f };
+inline constexpr Range envSustain { 0.0f, 1.0f };
+inline constexpr Range envRelease { 0.005f, 10.0f, 0.5f };
+inline constexpr Range modAmount { -1.0f, 1.0f };
+inline constexpr Range space { 0.0f, 1.0f };
+inline constexpr Range room { 0.0f, 1.0f };
+inline constexpr Range output { -36.0f, 6.0f };
+} // namespace ranges
+
+// All settings. Choice settings hold the index of the selected option.
+struct Params
+{
+    // Excite
+    int exciter = kStrike;
+    float attack = 0.04f;   // fade-in for Bow / Breath / Osc
+    float hardness = 0.5f;
+    float position = 0.2f;
+    float oscWave = 0.66f;  // Sine → Triangle → Saw → Square
+    int unison = 0;         // index: 0 = 1 voice ... 6 = 7 voices
+    float detune = 0.25f;
+
+    // Object
+    float shape = 0.5f;     // String → Tube → Bar → Plate → Bell
+    float material = 0.6f;  // Rubber → Wood → Metal → Glass
+    float size = 0.5f;
+    float decay = 1.0f;
+    float release = 1.0f;
+    int octave = 2;         // index: 0 = -2 ... 4 = +2
+
+    // Impossible
+    float bloom = 0.0f;
+    float drift = 0.0f;
+    float transmute = 0.0f;
+    float fracture = 0.0f;
+    float evolve = 1.5f;
+
+    // Filter & drive
+    int filterMode = kFilterLP;
+    float cutoff = 20000.0f;
+    float resonance = 0.0f;
+    float filterEnv = 0.0f;
+    float drive = 0.0f;
+    float body = 1.0f;      // 1 = all through the object, 0 = raw exciter only
+
+    // Modulation
+    std::array<int, kNumLfos> lfoShape { kLfoSine, kLfoTriangle };
+    std::array<float, kNumLfos> lfoRate { 1.0f, 0.25f };
+    std::array<int, kNumLfos> lfoSync { 0, 0 };
+    std::array<int, kNumLfos> lfoRetrig { 0, 0 };
+    float envAttack = 0.01f;
+    float envDecay = 0.5f;
+    float envSustain = 0.0f;
+    float envRelease = 0.5f;
+    std::array<int, kNumModSlots> modSource {};
+    std::array<int, kNumModSlots> modTarget {};
+    std::array<float, kNumModSlots> modAmount {};
+
+    // Space & output (handled by the plugin, not the voice engine)
+    float space = 0.25f;
+    float room = 0.6f;
+    float output = 0.0f;
+
+    // Convenience: set one modulation slot.
+    void mod (int slot, int source, int target, float amount)
+    {
+        modSource[(size_t) slot] = source;
+        modTarget[(size_t) slot] = target;
+        modAmount[(size_t) slot] = amount;
+    }
+};
+
+// Calls f(id, field) for every setting. This is the single list that links
+// plugin parameter IDs to Params fields (used for reading, writing, presets).
+template <typename P, typename F>
+void visitParams (P& p, F&& f)
+{
+    static const char* const lfoShapeIds[kNumLfos] = { "lfo1Shape", "lfo2Shape" };
+    static const char* const lfoRateIds[kNumLfos] = { "lfo1Rate", "lfo2Rate" };
+    static const char* const lfoSyncIds[kNumLfos] = { "lfo1Sync", "lfo2Sync" };
+    static const char* const lfoRetrigIds[kNumLfos] = { "lfo1Retrig", "lfo2Retrig" };
+    static const char* const modSrcIds[kNumModSlots] = { "mod1Src", "mod2Src", "mod3Src", "mod4Src", "mod5Src", "mod6Src" };
+    static const char* const modDstIds[kNumModSlots] = { "mod1Dst", "mod2Dst", "mod3Dst", "mod4Dst", "mod5Dst", "mod6Dst" };
+    static const char* const modAmtIds[kNumModSlots] = { "mod1Amt", "mod2Amt", "mod3Amt", "mod4Amt", "mod5Amt", "mod6Amt" };
+
+    f ("exciter", p.exciter);
+    f ("attack", p.attack);
+    f ("hardness", p.hardness);
+    f ("position", p.position);
+    f ("oscWave", p.oscWave);
+    f ("unison", p.unison);
+    f ("detune", p.detune);
+
+    f ("shape", p.shape);
+    f ("material", p.material);
+    f ("size", p.size);
+    f ("decay", p.decay);
+    f ("release", p.release);
+    f ("octave", p.octave);
+
+    f ("bloom", p.bloom);
+    f ("drift", p.drift);
+    f ("transmute", p.transmute);
+    f ("fracture", p.fracture);
+    f ("evolve", p.evolve);
+
+    f ("filterMode", p.filterMode);
+    f ("cutoff", p.cutoff);
+    f ("resonance", p.resonance);
+    f ("filterEnv", p.filterEnv);
+    f ("drive", p.drive);
+    f ("body", p.body);
+
+    for (int i = 0; i < kNumLfos; ++i)
+    {
+        f (lfoShapeIds[i], p.lfoShape[(size_t) i]);
+        f (lfoRateIds[i], p.lfoRate[(size_t) i]);
+        f (lfoSyncIds[i], p.lfoSync[(size_t) i]);
+        f (lfoRetrigIds[i], p.lfoRetrig[(size_t) i]);
+    }
+
+    f ("envAttack", p.envAttack);
+    f ("envDecay", p.envDecay);
+    f ("envSustain", p.envSustain);
+    f ("envRelease", p.envRelease);
+
+    for (int i = 0; i < kNumModSlots; ++i)
+    {
+        f (modSrcIds[i], p.modSource[(size_t) i]);
+        f (modDstIds[i], p.modTarget[(size_t) i]);
+        f (modAmtIds[i], p.modAmount[(size_t) i]);
+    }
+
+    f ("space", p.space);
+    f ("room", p.room);
+    f ("output", p.output);
+}
+
+} // namespace impossible
