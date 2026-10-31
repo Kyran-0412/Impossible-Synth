@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows VST3
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Engine test (renders demo sounds)
+        shell: bash
+        run: |
+          mkdir -p demo-sounds
+          ./build/Release/render_test.exe demo-sounds
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: Impossible-Synth-Windows
+          path: |
+            build/ImpossibleSynth_artefacts/Release/VST3/
+            build/ImpossibleSynth_artefacts/Release/Standalone/*.exe
+
+      - name: Upload demo sounds
+        uses: actions/upload-artifact@v4
+        with:
+          name: Demo-Sounds
+          path: demo-sounds/*.wav
+
+      # pluginval loads the plugin like a DAW would and stress-tests it.
+      - name: Validate with pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          ./pluginval/pluginval.exe --strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "build/ImpossibleSynth_artefacts/Release/VST3/Impossible Synth.vst3"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Upload pluginval log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-log
+          path: pluginval-logs/
+          if-no-files-found: ignore
