@@ -60,10 +60,12 @@ inline const RatioTable& shapeLogRatios()
                 t[3][(size_t) k] = (float) (f[(size_t) k] / f[0]);
         }
 
-        // Church-bell partials (hum, prime, tierce, quint, nominal, ...),
-        // extended upwards with gradually tightening spacing.
+        // Church-bell partials (prime, hum, tierce, quint, nominal, ...),
+        // extended upwards with gradually tightening spacing. The prime (1.0)
+        // comes first so every shape keeps a mode at the played note while
+        // morphing; the hum an octave below sits second.
         {
-            const float bell[16] = { 0.5f, 1.0f, 1.183f, 1.506f, 2.0f, 2.514f, 2.662f, 3.011f,
+            const float bell[16] = { 1.0f, 0.5f, 1.183f, 1.506f, 2.0f, 2.514f, 2.662f, 3.011f,
                                      3.36f, 4.0f, 4.209f, 4.86f, 5.43f, 6.0f, 6.67f, 7.31f };
             for (int k = 0; k < kNumModes; ++k)
                 t[4][(size_t) k] = k < 16 ? bell[k]

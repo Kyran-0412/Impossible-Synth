@@ -40,7 +40,8 @@ juce_add_plugin(ImpossibleSynth
 target_sources(ImpossibleSynth PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
-    Source/dsp/Engine.cpp)
+    Source/dsp/Engine.cpp
+    Source/dsp/Wavetable.cpp)
 
 target_include_directories(ImpossibleSynth PRIVATE Source)
 
@@ -59,5 +60,28 @@ target_link_libraries(ImpossibleSynth
         juce::juce_recommended_warning_flags)
 
 # Engine test that runs without JUCE: renders WAVs and checks levels.
-add_executable(render_test tools/render_test.cpp Source/dsp/Engine.cpp)
+add_executable(render_test tools/render_test.cpp Source/dsp/Engine.cpp Source/dsp/Wavetable.cpp)
 target_include_directories(render_test PRIVATE Source)
+
+# Optional developer tools (not part of the normal build):
+#   ui_snapshot  renders every UI tab to PNG files
+#   state_test   checks saving/loading, including old single-layer saves
+option(IMPOSSIBLE_UI_SNAPSHOT "Build the ui_snapshot and state_test tools" OFF)
+if(IMPOSSIBLE_UI_SNAPSHOT)
+    foreach(tool ui_snapshot state_test)
+        juce_add_console_app(${tool} PRODUCT_NAME "${tool}")
+        target_sources(${tool} PRIVATE
+            tools/${tool}.cpp
+            Source/PluginProcessor.cpp
+            Source/PluginEditor.cpp
+            Source/dsp/Engine.cpp
+            Source/dsp/Wavetable.cpp)
+        target_include_directories(${tool} PRIVATE Source)
+        target_compile_definitions(${tool} PRIVATE
+            JucePlugin_Name="Impossible Synth"
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0)
+        target_link_libraries(${tool} PRIVATE juce::juce_audio_utils juce::juce_dsp
+            juce::juce_recommended_config_flags)
+    endforeach()
+endif()

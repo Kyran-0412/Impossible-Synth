@@ -18,6 +18,11 @@ const juce::Colour impossible { 0xffc77dff };
 const juce::Colour filter { 0xffff6b8b };
 const juce::Colour mod { 0xff9be15d };
 const juce::Colour space { 0xff5b9cff };
+const juce::Colour wavetable { 0xff6be3ff };
+const juce::Colour macro { 0xfff7d154 };
+
+const juce::Colour layers[kNumLayers] = { juce::Colour (0xff4fd1c5), juce::Colour (0xffffb347),
+                                          juce::Colour (0xffc77dff), juce::Colour (0xff5b9cff) };
 } // namespace Colours
 
 namespace
@@ -28,8 +33,8 @@ juce::Font uiFont (float height, bool bold = false)
     return juce::Font (bold ? options.withStyle ("Bold") : options);
 }
 
-constexpr int kFactoryIdOffset = 1;  // combo IDs 1..N are factory presets
-constexpr int kUserIdOffset = 1001;  // combo IDs 1001.. are user presets
+constexpr int kFactoryIdOffset = 1;  // preset combo IDs 1..N are factory presets
+constexpr int kUserIdOffset = 1001;  // preset combo IDs 1001.. are user presets
 } // namespace
 
 //==============================================================================
@@ -53,6 +58,7 @@ ImpossibleLookAndFeel::ImpossibleLookAndFeel()
     setColour (juce::TextButton::buttonColourId, Colours::knobBody);
     setColour (juce::TextButton::textColourOffId, Colours::text);
     setColour (juce::TextButton::textColourOnId, Colours::text);
+    setColour (juce::ToggleButton::textColourId, Colours::text);
     setColour (juce::TextEditor::backgroundColourId, Colours::knobBody);
     setColour (juce::TextEditor::textColourId, Colours::text);
     setColour (juce::TextEditor::outlineColourId, Colours::panelEdge);
@@ -182,9 +188,145 @@ juce::Font ImpossibleLookAndFeel::getTextButtonFont (juce::TextButton&, int butt
     return uiFont (juce::jmin (15.0f, (float) buttonHeight * 0.5f), true);
 }
 
+void ImpossibleLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool isMouseOver, bool)
+{
+    // A pill that lights up when on.
+    const auto r = button.getLocalBounds().toFloat().reduced (1.0f);
+    const bool on = button.getToggleState();
+    const auto colour = button.findColour (juce::ToggleButton::tickColourId);
+    g.setColour (on ? colour.withAlpha (isMouseOver ? 0.9f : 0.75f) : Colours::knobBody.brighter (isMouseOver ? 0.1f : 0.0f));
+    g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+    g.setColour (on ? Colours::background : Colours::dim);
+    g.setFont (uiFont (14.0f, true));
+    g.drawText (on ? "ON" : "OFF", r, juce::Justification::centred);
+}
+
 juce::Font ImpossibleLookAndFeel::getPopupMenuFont()
 {
     return uiFont (15.0f);
+}
+
+//==============================================================================
+void WavetableDisplay::refresh()
+{
+    const auto* table = getTable ? getTable() : nullptr;
+    const float position = getPosition ? getPosition() : 0.0f;
+    if (table != lastTable || std::abs (position - lastPosition) > 0.001f)
+    {
+        lastTable = table;
+        lastPosition = position;
+        repaint();
+    }
+}
+
+void WavetableDisplay::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (Colours::background);
+    g.fillRoundedRectangle (bounds, 8.0f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.0f);
+
+    const auto* table = getTable ? getTable() : nullptr;
+    if (table == nullptr)
+        return;
+
+    const auto area = bounds.reduced (12.0f, 14.0f).withTrimmedTop (12.0f);
+    const float dx = area.getWidth() * 0.22f;
+    const float dy = area.getHeight() * 0.38f;
+    const float waveW = area.getWidth() - dx;
+    const float waveH = area.getHeight() - dy;
+    const int level = 3;
+    const int points = 96;
+    const int frames = table->numFrames();
+    const int shown = juce::jmin (frames, 20);
+    const float position = juce::jlimit (0.0f, 1.0f, getPosition ? getPosition() : 0.0f);
+
+    auto framePath = [&] (float framePos, float depth)
+    {
+        juce::Path p;
+        const float x0 = area.getX() + dx * depth;
+        const float yMid = area.getBottom() - waveH * 0.5f - dy * depth;
+        for (int n = 0; n <= points; ++n)
+        {
+            const float s = table->read (framePos, level, (float) (n % points) / (float) points);
+            const float px = x0 + waveW * (float) n / (float) points;
+            const float py = yMid - s * waveH * 0.42f;
+            if (n == 0)
+                p.startNewSubPath (px, py);
+            else
+                p.lineTo (px, py);
+        }
+        return p;
+    };
+
+    // Back to front.
+    for (int i = shown - 1; i >= 0; --i)
+    {
+        const float depth = shown > 1 ? (float) i / (float) (shown - 1) : 0.0f;
+        const float framePos = depth * (float) (frames - 1);
+        g.setColour (colour.withAlpha (0.10f + 0.12f * (1.0f - depth)));
+        g.strokePath (framePath (framePos, depth), juce::PathStrokeType (1.0f));
+    }
+
+    g.setColour (colour);
+    g.strokePath (framePath (position * (float) (frames - 1), position), juce::PathStrokeType (2.2f));
+
+    g.setColour (Colours::text);
+    g.setFont (uiFont (13.0f, true));
+    g.drawText (table->name(), bounds.reduced (12.0f, 6.0f).removeFromTop (18.0f), juce::Justification::centredLeft);
+    g.setColour (Colours::dim);
+    g.setFont (uiFont (12.0f));
+    g.drawText (juce::String (frames) + (frames == 1 ? " frame" : " frames"),
+                bounds.reduced (12.0f, 6.0f).removeFromTop (18.0f), juce::Justification::centredRight);
+}
+
+//==============================================================================
+void LayerTab::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (selected ? Colours::panel.brighter (0.08f) : Colours::panel);
+    g.fillRoundedRectangle (r, 8.0f);
+    g.setColour (selected ? colour : Colours::panelEdge);
+    g.drawRoundedRectangle (r, 8.0f, selected ? 2.0f : 1.0f);
+
+    if (layer < 0)
+    {
+        g.setColour (selected ? Colours::text : Colours::dim);
+        g.setFont (uiFont (15.0f, true));
+        g.drawText ("MIX", r, juce::Justification::centred);
+        return;
+    }
+
+    // Power dot.
+    const auto dot = juce::Rectangle<float> (r.getX() + 12.0f, r.getCentreY() - 7.0f, 14.0f, 14.0f);
+    g.setColour (enabled ? colour : Colours::knobBody);
+    g.fillEllipse (dot);
+    g.setColour (enabled ? colour.brighter (0.3f) : Colours::dim);
+    g.drawEllipse (dot, 1.5f);
+
+    auto textArea = r.withTrimmedLeft (34.0f);
+    g.setColour (enabled ? Colours::text : Colours::dim);
+    g.setFont (uiFont (15.0f, true));
+    g.drawText ("LAYER " + juce::String (layer + 1), textArea.removeFromTop (r.getHeight() * 0.55f),
+                juce::Justification::bottomLeft);
+    g.setColour (enabled ? colour : Colours::dim);
+    g.setFont (uiFont (12.0f));
+    g.drawText (engineName, textArea, juce::Justification::topLeft);
+}
+
+void LayerTab::mouseDown (const juce::MouseEvent& e)
+{
+    if (layer >= 0 && e.x < 34)
+    {
+        if (onTogglePower)
+            onTogglePower();
+        return;
+    }
+    if (onSelect)
+        onSelect();
 }
 
 //==============================================================================
@@ -195,67 +337,202 @@ ImpossibleSynthEditor::ImpossibleSynthEditor (ImpossibleSynthProcessor& p)
 {
     addAndMakeVisible (content);
 
-    sections = { { "EXCITE", Colours::excite, {} },
-                 { "OBJECT", Colours::object, {} },
-                 { "IMPOSSIBLE", Colours::impossible, {} },
-                 { "FILTER & DRIVE", Colours::filter, {} },
-                 { "MODULATION", Colours::mod, {} },
-                 { "SPACE", Colours::space, {} } };
+    auto addKnobTo = [] (std::vector<juce::Component*>& v, Knob* k) { v.push_back (&k->slider); v.push_back (&k->label); };
+    auto addChoiceTo = [] (std::vector<juce::Component*>& v, Choice* c) { v.push_back (&c->box); v.push_back (&c->label); };
 
-    // Excite
-    exciter = &addChoice ("exciter", "Exciter", "How the object is played. Bow, Breath and Osc keep sounding while you hold the key.");
-    attack = &addKnob ("attack", "Attack", Colours::excite, "Fade-in time for Bow, Breath and Osc.");
-    hardness = &addKnob ("hardness", "Hardness", Colours::excite, "How hard the mallet is, or how bright the bow/breath/osc is. Velocity adds to it.");
+    // ---- Physical page ----
+    exciter = &addChoice ("exciter", "Exciter", "How the object is played. Bow, Breath, Osc and Wavetable keep sounding while you hold the key.");
+    attack = &addKnob ("attack", "Attack", Colours::excite, "Fade-in time (sustained exciters, and the Wavetable amp).");
+    hardness = &addKnob ("hardness", "Hardness", Colours::excite, "How hard the mallet is, or how bright the sustained exciter is. Velocity adds to it.");
     position = &addKnob ("position", "Position", Colours::excite, "Where on the object you hit it. Changes which overtones ring.");
     oscWave = &addKnob ("oscWave", "Wave", Colours::excite, "Osc exciter waveform: Sine, Triangle, Saw, Square.");
     unison = &addChoice ("unison", "Unison", "Osc exciter: number of stacked, detuned oscillators.");
     detune = &addKnob ("detune", "Detune", Colours::excite, "Osc exciter: how far apart the unison oscillators are tuned.");
 
-    // Object
     shape = &addKnob ("shape", "Shape", Colours::object, "Morphs the object: String, Tube, Bar, Plate, Bell.");
     material = &addKnob ("material", "Material", Colours::object, "Morphs what it's made of: Rubber, Wood, Metal, Glass.");
     size = &addKnob ("size", "Size", Colours::object, "Tiny to huge. Bigger rings longer, deeper and less perfectly.");
     decay = &addKnob ("decay", "Decay", Colours::object, "Multiplies how long the object rings.");
-    release = &addKnob ("release", "Release", Colours::object, "How quickly the sound is damped after you let go of the key.");
+    release = &addKnob ("release", "Release", Colours::object, "How quickly the sound dies after you let go of the key.");
     octave = &addChoice ("octave", "Octave", "Transpose by octaves.");
 
-    // Impossible
     bloom = &addKnob ("bloom", "Bloom", Colours::impossible, "The sound swells louder after the hit instead of only fading.");
     drift = &addKnob ("drift", "Drift", Colours::impossible, "Overtones bend down (left) or up (right) as the note rings.", true);
     transmute = &addKnob ("transmute", "Transmute", Colours::impossible, "The material changes during the note: left heads to rubber, right to glass.", true);
     fracture = &addKnob ("fracture", "Fracture", Colours::impossible, "Overtones split apart and beat against each other, like the object cracking.");
     evolve = &addKnob ("evolve", "Evolve", Colours::impossible, "How fast Bloom, Drift, Transmute and Fracture happen.");
 
-    // Filter & drive
+    for (auto* k : { attack, hardness, position, oscWave, detune, shape, material, size, decay, release,
+                     bloom, drift, transmute, fracture, evolve })
+        addKnobTo (physicalComponents, k);
+    for (auto* c : { exciter, unison, octave })
+        addChoiceTo (physicalComponents, c);
+    physicalComponents.push_back (&editWavetableButton);
+
+    // ---- Wavetable page ----
+    wtTable = &addChoice ("wtTable", "Table", "Built-in wavetables, or Imported for a WAV you loaded.");
+    wtPos = &addKnob ("wtPos", "Position", Colours::wavetable, "Scan through the wavetable's frames.");
+    wtWarpMode = &addChoice ("wtWarpMode", "Warp", "Bends the waveform: Bend, Sync, Mirror, Squeeze, Fold, Crush, FM.");
+    wtWarp = &addKnob ("wtWarp", "Warp Amt", Colours::wavetable, "How much the Warp mode bends the waveform.");
+    wtUnison = &addChoice ("wtUnison", "Unison", "Number of stacked, detuned copies.");
+    wtDetune = &addKnob ("wtDetune", "Detune", Colours::wavetable, "How far apart the unison copies are tuned.");
+    wtSpread = &addKnob ("wtSpread", "Spread", Colours::wavetable, "Stereo width of the unison copies.");
+    wtSub = &addKnob ("wtSub", "Sub", Colours::wavetable, "A sine one octave below.");
+    ampDecay = &addKnob ("ampDecay", "Decay", Colours::object, "Amp envelope decay.");
+    ampSustain = &addKnob ("ampSustain", "Sustain", Colours::object, "Amp envelope sustain level.");
+
+    wavetableDisplay.colour = Colours::wavetable;
+    wavetableDisplay.getTable = [this] { return boundLayer >= 0 ? processor.getLayerWavetable (boundLayer) : nullptr; };
+    wavetableDisplay.getPosition = [this] { return rawValue (ImpossibleSynthProcessor::layerId (boundLayer, "wtPos")); };
+    content.addAndMakeVisible (wavetableDisplay);
+
+    importButton.setTooltip ("Load a WAV wavetable (Serum/Vital style, 2048 samples per frame) or a single-cycle waveform.");
+    importButton.onClick = [this] { importWavetable(); };
+    content.addAndMakeVisible (importButton);
+
+    for (auto* k : { wtPos, wtWarp, wtDetune, wtSpread, wtSub, attack, ampDecay, ampSustain, release })
+        addKnobTo (wavetableComponents, k);
+    for (auto* c : { wtTable, wtWarpMode, wtUnison, octave })
+        addChoiceTo (wavetableComponents, c);
+    wavetableComponents.push_back (&wavetableDisplay);
+    wavetableComponents.push_back (&importButton);
+    wavetableComponents.push_back (&backToObjectButton);
+
+    editWavetableButton.setTooltip ("This layer's exciter is a wavetable: edit it.");
+    editWavetableButton.onClick = [this] { showView (view, true); };
+    content.addChildComponent (editWavetableButton);
+    backToObjectButton.onClick = [this] { showView (view, false); };
+    content.addChildComponent (backToObjectButton);
+
+    // ---- Shared: filter & modulation ----
     filterMode = &addChoice ("filterMode", "Filter", "Filter type, applied to each note.");
     cutoff = &addKnob ("cutoff", "Cutoff", Colours::filter, "Filter cutoff frequency.");
     resonance = &addKnob ("resonance", "Resonance", Colours::filter, "Filter resonance: emphasis around the cutoff.");
     filterEnv = &addKnob ("filterEnv", "Env Amt", Colours::filter, "How much the Mod Env moves the cutoff (up to 6 octaves either way).", true);
     drive = &addKnob ("drive", "Drive", Colours::filter, "Distortion before the filter.");
-    body = &addKnob ("body", "Body", Colours::filter, "How much of the sound goes through the object. Lower it to hear the raw Bow/Breath/Osc.");
+    body = &addKnob ("body", "Body", Colours::filter, "How much of the sound goes through the object. Lower it to hear the raw exciter.");
 
-    // Modulation
     for (int l = 0; l < kNumLfos; ++l)
     {
         const juce::String n = "lfo" + juce::String (l + 1);
-        lfoShape[(size_t) l] = &addChoice ((n + "Shape").toRawUTF8(), "Shape", "LFO waveform. S&H jumps randomly, Drift wanders smoothly.");
-        lfoSync[(size_t) l] = &addChoice ((n + "Sync").toRawUTF8(), "Sync", "Free uses the Rate knob. Note values lock the LFO to the song tempo.");
-        lfoRetrig[(size_t) l] = &addChoice ((n + "Retrig").toRawUTF8(), "Mode", "Free: all notes share one LFO. Retrig: restarts on every note.");
-        lfoRate[(size_t) l] = &addKnob ((n + "Rate").toRawUTF8(), "Rate", Colours::mod, "LFO speed (when Sync is Free).");
+        lfoShape[(size_t) l] = &addChoice (n + "Shape", "Shape", "LFO waveform. S&H jumps randomly, Drift wanders smoothly.");
+        lfoSync[(size_t) l] = &addChoice (n + "Sync", "Sync", "Free uses the Rate knob. Note values lock the LFO to the song tempo.");
+        lfoRetrig[(size_t) l] = &addChoice (n + "Retrig", "Mode", "Free: all notes share one LFO. Retrig: restarts on every note.");
+        lfoRate[(size_t) l] = &addKnob (n + "Rate", "Rate", Colours::mod, "LFO speed (when Sync is Free).");
     }
     envA = &addKnob ("envAttack", "A", Colours::mod, "Mod Env attack.");
     envD = &addKnob ("envDecay", "D", Colours::mod, "Mod Env decay.");
     envS = &addKnob ("envSustain", "S", Colours::mod, "Mod Env sustain level.");
     envR = &addKnob ("envRelease", "R", Colours::mod, "Mod Env release.");
+
+    for (auto* k : { cutoff, resonance, filterEnv, drive, body, lfoRate[0], lfoRate[1], envA, envD, envS, envR })
+        addKnobTo (sharedComponents, k);
+    for (auto* c : { filterMode, lfoShape[0], lfoSync[0], lfoRetrig[0], lfoShape[1], lfoSync[1], lfoRetrig[1] })
+        addChoiceTo (sharedComponents, c);
+
     for (int i = 0; i < kNumModSlots; ++i)
-        setupModRow (modRows[(size_t) i], i);
+    {
+        auto& row = modRows[(size_t) i];
+        row.index = i;
+        const juce::String n = "mod" + juce::String (i + 1);
+        auto fill = [this] (juce::ComboBox& box, const juce::String& id)
+        {
+            if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (ImpossibleSynthProcessor::layerId (0, id))))
+                box.addItemList (param->choices, 1);
+            box.setJustificationType (juce::Justification::centredLeft);
+            content.addAndMakeVisible (box);
+        };
+        fill (row.source, n + "Src");
+        fill (row.target, n + "Dst");
+        row.source.setTooltip ("Modulation source. Macros 1-4 are the global knobs at the bottom.");
+        row.target.setTooltip ("What the source moves.");
+        row.amount.setSliderStyle (juce::Slider::LinearHorizontal);
+        row.amount.setTextBoxStyle (juce::Slider::TextBoxRight, false, 46, 20);
+        row.amount.setColour (juce::Slider::trackColourId, Colours::mod);
+        row.amount.setTooltip ("Modulation amount. Double-click to reset.");
+        row.amount.setDoubleClickReturnValue (true, 0.0);
+        content.addAndMakeVisible (row.amount);
+        sharedComponents.push_back (&row.source);
+        sharedComponents.push_back (&row.target);
+        sharedComponents.push_back (&row.amount);
+    }
 
-    // Space
-    space = &addKnob ("space", "Space", Colours::space, "Amount of reverb.");
-    room = &addKnob ("room", "Room", Colours::space, "Size of the reverb room.");
-    output = &addKnob ("output", "Output", Colours::space, "Output volume.");
+    // ---- Mix page ----
+    for (int i = 0; i < kNumLayers; ++i)
+    {
+        auto& col = mixColumns[(size_t) i];
+        const auto colour = Colours::layers[i];
+        col.power.setColour (juce::ToggleButton::tickColourId, colour);
+        col.power.setTooltip ("Switch this layer on or off.");
+        content.addAndMakeVisible (col.power);
+        col.powerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            processor.apvts, ImpossibleSynthProcessor::layerId (i, "on"), col.power);
 
-    // Preset bar
+        col.type = &addChoice ("type", "Engine", "Physical (objects) or Wavetable.", i);
+        col.volume = &addKnob ("volume", "Volume", colour, "Layer volume.", false, i);
+        col.pan = &addKnob ("pan", "Pan", colour, "Layer pan.", true, i);
+        col.fine = &addKnob ("fine", "Fine", colour, "Fine tune in cents. Detune layers against each other for width.", true, i);
+        col.octave = &addChoice ("octave", "Octave", "Transpose this layer by octaves.", i);
+        col.keyLow = &addChoice ("keyLow", "Key Low", "Lowest note this layer plays (for keyboard splits).", i);
+        col.keyHigh = &addChoice ("keyHigh", "Key High", "Highest note this layer plays (for keyboard splits).", i);
+        col.velLow = &addKnob ("velLow", "Vel Low", colour, "Softest velocity this layer plays (for velocity switching).", false, i);
+        col.velHigh = &addKnob ("velHigh", "Vel High", colour, "Hardest velocity this layer plays.", false, i);
+        col.edit.onClick = [this, i] { showView (i); };
+        col.edit.setColour (juce::TextButton::buttonColourId, colour.withAlpha (0.3f));
+        content.addAndMakeVisible (col.edit);
+
+        mixComponents.push_back (&col.power);
+        mixComponents.push_back (&col.edit);
+        for (auto* k : { col.volume, col.pan, col.fine, col.velLow, col.velHigh })
+            addKnobTo (mixComponents, k);
+        for (auto* c : { col.type, col.octave, col.keyLow, col.keyHigh })
+            addChoiceTo (mixComponents, c);
+    }
+
+    // ---- Global strip ----
+    for (int i = 0; i < kNumMacros; ++i)
+        macros[(size_t) i] = &addKnob ("macro" + juce::String (i + 1), "Macro " + juce::String (i + 1), Colours::macro,
+                                       "A knob you can route in any layer's Matrix (source: Macro "
+                                           + juce::String (i + 1) + "). One macro can move several layers at once.",
+                                       false, kGlobal);
+    space = &addKnob ("space", "Space", Colours::space, "Amount of reverb.", false, kGlobal);
+    room = &addKnob ("room", "Room", Colours::space, "Size of the reverb room.", false, kGlobal);
+    output = &addKnob ("output", "Output", Colours::space, "Output volume.", false, kGlobal);
+
+    // ---- Layer tabs ----
+    for (int t = 0; t <= kNumLayers; ++t)
+    {
+        auto& tab = tabs[(size_t) t];
+        tab.layer = t - 1;
+        tab.colour = t == 0 ? Colours::text : Colours::layers[t - 1];
+        tab.onSelect = [this, t] { showView (t - 1); };
+        if (t > 0)
+        {
+            tab.setTooltip ("Click to edit layer " + juce::String (t) + ". Click the dot to switch it on/off.");
+            tab.onTogglePower = [this, t]
+            {
+                if (auto* param = processor.apvts.getParameter (ImpossibleSynthProcessor::layerId (t - 1, "on")))
+                {
+                    param->beginChangeGesture();
+                    param->setValueNotifyingHost (param->getValue() > 0.5f ? 0.0f : 1.0f);
+                    param->endChangeGesture();
+                }
+            };
+        }
+        else
+        {
+            tab.setTooltip ("All four layers side by side: volume, pan, tuning, key and velocity ranges.");
+        }
+        content.addAndMakeVisible (tab);
+    }
+    engineType = &addChoice ("type", "", "This layer's engine: Physical (objects) or Wavetable.");
+    engineLabel.setText ("Engine", juce::dontSendNotification);
+    engineLabel.setFont (uiFont (14.0f, true));
+    engineLabel.setColour (juce::Label::textColourId, Colours::dim);
+    engineLabel.setJustificationType (juce::Justification::centredRight);
+    content.addAndMakeVisible (engineLabel);
+
+    // ---- Preset bar ----
     for (auto* b : { &prevButton, &nextButton, &saveButton, &randomButton })
         content.addAndMakeVisible (*b);
     content.addAndMakeVisible (presetBox);
@@ -266,7 +543,7 @@ ImpossibleSynthEditor::ImpossibleSynthEditor (ImpossibleSynthProcessor& p)
     saveButton.onClick = [this] { savePresetDialog(); };
     saveButton.setTooltip ("Save the current sound as a preset (in Documents/Impossible Synth/Presets).");
     randomButton.onClick = [this] { processor.randomize(); };
-    randomButton.setTooltip ("Roll a random sound.");
+    randomButton.setTooltip ("Roll a random sound (often with two or three layers).");
     randomButton.setColour (juce::TextButton::buttonColourId, Colours::impossible.withAlpha (0.35f));
     presetBox.onChange = [this] { presetChosen(); };
     refreshPresetList();
@@ -278,7 +555,7 @@ ImpossibleSynthEditor::ImpossibleSynthEditor (ImpossibleSynthProcessor& p)
     keyboard.setOctaveForMiddleC (5); // same note names as FL Studio
     content.addAndMakeVisible (keyboard);
 
-    layoutContent();
+    showView (0);
 
     // Set last so every child picks up the custom look.
     setLookAndFeel (&lnf);
@@ -304,11 +581,27 @@ ImpossibleSynthEditor::~ImpossibleSynthEditor()
     setLookAndFeel (nullptr);
 }
 
-ImpossibleSynthEditor::Knob& ImpossibleSynthEditor::addKnob (const char* paramId, const juce::String& name,
+juce::String ImpossibleSynthEditor::paramIdFor (const juce::String& baseId, int layer) const
+{
+    if (layer == kGlobal)
+        return baseId;
+    return ImpossibleSynthProcessor::layerId (layer == kCurrentLayer ? juce::jmax (0, boundLayer) : layer, baseId);
+}
+
+float ImpossibleSynthEditor::rawValue (const juce::String& id) const
+{
+    if (auto* v = processor.apvts.getRawParameterValue (id))
+        return v->load();
+    return 0.0f;
+}
+
+ImpossibleSynthEditor::Knob& ImpossibleSynthEditor::addKnob (const juce::String& baseId, const juce::String& name,
                                                              juce::Colour colour, const juce::String& tooltip,
-                                                             bool bipolar)
+                                                             bool bipolar, int layer)
 {
     auto k = std::make_unique<Knob>();
+    k->baseId = baseId;
+    k->layer = layer;
     k->slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     k->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 100, 18);
     k->slider.setColour (juce::Slider::rotarySliderFillColourId, colour);
@@ -321,20 +614,26 @@ ImpossibleSynthEditor::Knob& ImpossibleSynthEditor::addKnob (const char* paramId
     k->label.setFont (uiFont (14.0f, true));
     content.addAndMakeVisible (k->label);
 
-    k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.apvts, paramId, k->slider);
-    // Double-click resets to default (set after the attachment so it uses the real range).
-    if (auto* param = processor.apvts.getParameter (paramId))
-        k->slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    if (layer != kCurrentLayer)
+    {
+        const auto id = paramIdFor (baseId, layer);
+        k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.apvts, id, k->slider);
+        if (auto* param = processor.apvts.getParameter (id))
+            k->slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    }
 
     knobs.push_back (std::move (k));
     return *knobs.back();
 }
 
-ImpossibleSynthEditor::Choice& ImpossibleSynthEditor::addChoice (const char* paramId, const juce::String& name,
-                                                                 const juce::String& tooltip)
+ImpossibleSynthEditor::Choice& ImpossibleSynthEditor::addChoice (const juce::String& baseId, const juce::String& name,
+                                                                 const juce::String& tooltip, int layer)
 {
     auto c = std::make_unique<Choice>();
-    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (paramId)))
+    c->baseId = baseId;
+    c->layer = layer;
+    const auto id = paramIdFor (baseId, layer == kCurrentLayer ? 0 : layer);
+    if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (id)))
         c->box.addItemList (param->choices, 1);
     c->box.setJustificationType (juce::Justification::centred);
     c->box.setTooltip (tooltip);
@@ -345,36 +644,66 @@ ImpossibleSynthEditor::Choice& ImpossibleSynthEditor::addChoice (const char* par
     c->label.setFont (uiFont (14.0f, true));
     content.addAndMakeVisible (c->label);
 
-    c->attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, paramId, c->box);
+    if (layer != kCurrentLayer)
+        c->attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, id, c->box);
+
     choices.push_back (std::move (c));
     return *choices.back();
 }
 
-void ImpossibleSynthEditor::setupModRow (ModRow& row, int index)
+void ImpossibleSynthEditor::bindToLayer (int layer)
 {
-    const juce::String n = "mod" + juce::String (index + 1);
-    auto fill = [this] (juce::ComboBox& box, const juce::String& id)
+    boundLayer = layer;
+    for (auto& k : knobs)
     {
-        if (auto* param = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter (id)))
-            box.addItemList (param->choices, 1);
-        box.setJustificationType (juce::Justification::centredLeft);
-        content.addAndMakeVisible (box);
-    };
-    fill (row.source, n + "Src");
-    fill (row.target, n + "Dst");
-    row.source.setTooltip ("Modulation source.");
-    row.target.setTooltip ("What the source moves.");
+        if (k->layer != kCurrentLayer)
+            continue;
+        k->attachment.reset();
+        const auto id = ImpossibleSynthProcessor::layerId (layer, k->baseId);
+        k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.apvts, id, k->slider);
+        if (auto* param = processor.apvts.getParameter (id))
+            k->slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    }
+    for (auto& c : choices)
+    {
+        if (c->layer != kCurrentLayer)
+            continue;
+        c->attachment.reset();
+        c->attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+            processor.apvts, ImpossibleSynthProcessor::layerId (layer, c->baseId), c->box);
+    }
+    for (auto& row : modRows)
+    {
+        const juce::String n = "mod" + juce::String (row.index + 1);
+        row.sourceAttachment.reset();
+        row.targetAttachment.reset();
+        row.amountAttachment.reset();
+        row.sourceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+            processor.apvts, ImpossibleSynthProcessor::layerId (layer, n + "Src"), row.source);
+        row.targetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
+            processor.apvts, ImpossibleSynthProcessor::layerId (layer, n + "Dst"), row.target);
+        row.amountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+            processor.apvts, ImpossibleSynthProcessor::layerId (layer, n + "Amt"), row.amount);
+    }
+}
 
-    row.amount.setSliderStyle (juce::Slider::LinearHorizontal);
-    row.amount.setTextBoxStyle (juce::Slider::TextBoxRight, false, 46, 20);
-    row.amount.setColour (juce::Slider::trackColourId, Colours::mod);
-    row.amount.setTooltip ("Modulation amount. Double-click to reset.");
-    row.amount.setDoubleClickReturnValue (true, 0.0);
-    content.addAndMakeVisible (row.amount);
+int ImpossibleSynthEditor::currentLayerType() const
+{
+    if (boundLayer < 0)
+        return kLayerPhysical;
+    return juce::roundToInt (rawValue (ImpossibleSynthProcessor::layerId (boundLayer, "type")));
+}
 
-    row.sourceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, n + "Src", row.source);
-    row.targetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, n + "Dst", row.target);
-    row.amountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.apvts, n + "Amt", row.amount);
+void ImpossibleSynthEditor::showView (int newView, bool showWavetable)
+{
+    view = newView;
+    if (view >= 0 && view != boundLayer)
+        bindToLayer (view);
+    shownType = currentLayerType();
+    wavetableOverride = view >= 0 && shownType == kLayerPhysical && showWavetable;
+    layoutContent();
+    timerCallback();
+    content.repaint();
 }
 
 //==============================================================================
@@ -387,45 +716,127 @@ void ImpossibleSynthEditor::resized()
 
 void ImpossibleSynthEditor::layoutContent()
 {
+    sections.clear();
+    subTitles.clear();
+    linksArea = {};
+
+    const bool mixView = view < 0;
+    const bool wavetablePage = ! mixView && (shownType == kLayerWavetable || wavetableOverride);
+
+    for (auto* list : { &physicalComponents, &wavetableComponents, &sharedComponents, &mixComponents })
+        for (auto* c : *list)
+            c->setVisible (false);
+    auto show = [] (std::vector<juce::Component*>& list) { for (auto* c : list) c->setVisible (true); };
+    if (mixView)
+        show (mixComponents);
+    else
+    {
+        show (wavetablePage ? wavetableComponents : physicalComponents);
+        show (sharedComponents);
+    }
+    editWavetableButton.setVisible (false); // the timer shows it when relevant
+    backToObjectButton.setVisible (wavetablePage && wavetableOverride);
+    engineLabel.setVisible (! mixView);
+    engineType->box.setVisible (! mixView);
+
     auto area = juce::Rectangle<int> (0, 0, kBaseWidth, kBaseHeight).reduced (16, 0);
 
     // Header: preset bar on the right.
     {
-        auto header = area.removeFromTop (60).withSizeKeepingCentre (area.getWidth(), 32);
+        auto header = area.removeFromTop (56).withSizeKeepingCentre (area.getWidth(), 32);
         randomButton.setBounds (header.removeFromRight (110));
         header.removeFromRight (8);
         saveButton.setBounds (header.removeFromRight (64));
         header.removeFromRight (8);
         nextButton.setBounds (header.removeFromRight (32));
         header.removeFromRight (4);
-        presetBox.setBounds (header.removeFromRight (250));
+        presetBox.setBounds (header.removeFromRight (260));
         header.removeFromRight (4);
         prevButton.setBounds (header.removeFromRight (32));
     }
 
-    auto kb = area.removeFromBottom (90);
+    // Layer tabs.
+    {
+        auto bar = area.removeFromTop (46);
+        tabs[0].setBounds (bar.removeFromLeft (90).reduced (0, 2));
+        for (int t = 1; t <= kNumLayers; ++t)
+        {
+            bar.removeFromLeft (8);
+            tabs[(size_t) t].setBounds (bar.removeFromLeft (168).reduced (0, 2));
+        }
+        engineType->box.setBounds (bar.removeFromRight (150).withSizeKeepingCentre (150, 30));
+        engineLabel.setBounds (bar.removeFromRight (80));
+    }
+    area.removeFromTop (10);
+
+    auto kb = area.removeFromBottom (88);
     kb.removeFromBottom (12);
     keyboard.setBounds (kb);
-    keyboard.setKeyWidth ((float) kb.getWidth() / 36.0f); // 36 white keys in C2..C7
+    keyboard.setKeyWidth ((float) kb.getWidth() / 36.0f); // 36 white keys in C3..C8
+    area.removeFromBottom (12);
 
-    const int gap = 12;
-    area.removeFromBottom (gap);
-    auto rowA = area.removeFromTop (196);
-    area.removeFromTop (gap);
-    auto rowB = area.removeFromTop (196);
-    area.removeFromTop (gap);
-    auto rowC = area;
+    // Global strip: macros, space, output.
+    {
+        auto strip = area.removeFromBottom (124);
+        area.removeFromBottom (12);
+        Section macroSection { "MACROS", Colours::macro, strip.removeFromLeft (620) };
+        strip.removeFromLeft (12);
+        Section spaceSection { "SPACE", Colours::space, strip.removeFromLeft (380) };
+        strip.removeFromLeft (12);
+        Section outSection { "OUTPUT", Colours::space, strip };
 
-    sections[0].bounds = rowA.removeFromLeft (560);
-    rowA.removeFromLeft (gap);
-    sections[1].bounds = rowA;
-    sections[2].bounds = rowB.removeFromLeft (560);
-    rowB.removeFromLeft (gap);
-    sections[3].bounds = rowB;
-    sections[5].bounds = rowC.removeFromRight (200);
-    rowC.removeFromRight (gap);
-    sections[4].bounds = rowC;
+        // Label on the left, knob (with its value underneath) on the right.
+        auto placeSmall = [] (Knob* k, juce::Rectangle<int> cell)
+        {
+            auto labelArea = cell.removeFromLeft (cell.getWidth() * 2 / 5);
+            k->label.setBounds (labelArea.withSizeKeepingCentre (labelArea.getWidth(), 20));
+            k->slider.setBounds (cell);
+        };
+        {
+            auto r = macroSection.bounds.reduced (10).withTrimmedTop (24);
+            const int w = r.getWidth() / kNumMacros;
+            for (int i = 0; i < kNumMacros; ++i)
+                placeSmall (macros[(size_t) i], i == kNumMacros - 1 ? r : r.removeFromLeft (w));
+        }
+        {
+            auto r = spaceSection.bounds.reduced (10).withTrimmedTop (24);
+            placeSmall (space, r.removeFromLeft (r.getWidth() / 2));
+            placeSmall (room, r);
+        }
+        placeSmall (output, outSection.bounds.reduced (10).withTrimmedTop (24));
 
+        sections.push_back (macroSection);
+        sections.push_back (spaceSection);
+        sections.push_back (outSection);
+    }
+
+    if (mixView)
+        layoutMixPage (area);
+    else if (wavetablePage)
+        layoutWavetablePage (area);
+    else
+        layoutPhysicalPage (area);
+}
+
+namespace
+{
+std::vector<juce::Rectangle<int>> cellsOf (juce::Rectangle<int> r, int count)
+{
+    std::vector<juce::Rectangle<int>> cells;
+    const int w = r.getWidth() / count;
+    for (int i = 0; i < count; ++i)
+        cells.push_back (i == count - 1 ? r : r.removeFromLeft (w));
+    return cells;
+}
+
+juce::Rectangle<int> innerOf (juce::Rectangle<int> section)
+{
+    return section.reduced (10).withTrimmedTop (30);
+}
+} // namespace
+
+void ImpossibleSynthEditor::layoutPhysicalPage (juce::Rectangle<int> page)
+{
     auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
     {
         k->label.setBounds (cell.removeFromTop (20));
@@ -436,28 +847,42 @@ void ImpossibleSynthEditor::layoutContent()
         c->label.setBounds (cell.removeFromTop (20));
         c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 110), 30).translated (0, -10));
     };
-    auto inner = [] (const Section& s) { return s.bounds.reduced (10).withTrimmedTop (30); };
-    auto row = [] (juce::Rectangle<int> r, int count)
-    {
-        std::vector<juce::Rectangle<int>> cells;
-        const int w = r.getWidth() / count;
-        for (int i = 0; i < count; ++i)
-            cells.push_back (i == count - 1 ? r : r.removeFromLeft (w));
-        return cells;
-    };
+
+    const int gap = 12;
+    auto rowA = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowB = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowC = page;
+
+    const auto colour = Colours::layers[juce::jmax (0, boundLayer)];
+    juce::ignoreUnused (colour);
+
+    Section excite { "EXCITE", Colours::excite, rowA.removeFromLeft (590) };
+    rowA.removeFromLeft (gap);
+    Section object { "OBJECT", Colours::object, rowA };
+    Section imp { "IMPOSSIBLE", Colours::impossible, rowB.removeFromLeft (590) };
+    rowB.removeFromLeft (gap);
+    sections.push_back (excite);
+    sections.push_back (object);
+    sections.push_back (imp);
 
     {
-        auto c = row (inner (sections[0]), 7);
-        placeChoice (exciter, c[0]);
-        placeKnob (attack, c[1]);
-        placeKnob (hardness, c[2]);
-        placeKnob (position, c[3]);
-        placeKnob (oscWave, c[4]);
-        placeChoice (unison, c[5]);
-        placeKnob (detune, c[6]);
+        auto r = innerOf (excite.bounds);
+        auto exciterCell = r.removeFromLeft (112);
+        exciter->label.setBounds (exciterCell.removeFromTop (20));
+        exciter->box.setBounds (exciterCell.withSizeKeepingCentre (106, 30).translated (0, -10));
+        auto c = cellsOf (r, 6);
+        placeKnob (attack, c[0]);
+        placeKnob (hardness, c[1]);
+        placeKnob (position, c[2]);
+        placeKnob (oscWave, c[3]);
+        placeChoice (unison, c[4]);
+        placeKnob (detune, c[5]);
+        editWavetableButton.setBounds (excite.bounds.getRight() - 160, excite.bounds.getY() + 8, 150, 26);
     }
     {
-        auto c = row (inner (sections[1]), 6);
+        auto c = cellsOf (innerOf (object.bounds), 6);
         placeKnob (shape, c[0]);
         placeKnob (material, c[1]);
         placeKnob (size, c[2]);
@@ -466,15 +891,101 @@ void ImpossibleSynthEditor::layoutContent()
         placeChoice (octave, c[5]);
     }
     {
-        auto c = row (inner (sections[2]), 5);
+        auto c = cellsOf (innerOf (imp.bounds), 5);
         placeKnob (bloom, c[0]);
         placeKnob (drift, c[1]);
         placeKnob (transmute, c[2]);
         placeKnob (fracture, c[3]);
         placeKnob (evolve, c[4]);
     }
+
+    layoutSharedSections (rowB, rowC);
+}
+
+void ImpossibleSynthEditor::layoutWavetablePage (juce::Rectangle<int> page)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
     {
-        auto c = row (inner (sections[3]), 6);
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    auto placeChoice = [] (Choice* c, juce::Rectangle<int> cell)
+    {
+        c->label.setBounds (cell.removeFromTop (20));
+        c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 120), 30).translated (0, -10));
+    };
+
+    const int gap = 12;
+    auto rowA = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowB = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowC = page;
+
+    Section wt { wavetableOverride ? "WAVETABLE  (exciter)" : "WAVETABLE", Colours::wavetable, rowA.removeFromLeft (800) };
+    rowA.removeFromLeft (gap);
+    Section osc { "UNISON & SUB", Colours::wavetable, rowA };
+    Section amp { wavetableOverride ? "ENVELOPE" : "AMP", Colours::object, rowB.removeFromLeft (590) };
+    rowB.removeFromLeft (gap);
+    sections.push_back (wt);
+    sections.push_back (osc);
+    sections.push_back (amp);
+
+    {
+        auto r = innerOf (wt.bounds);
+        wavetableDisplay.setBounds (r.removeFromLeft (330));
+        r.removeFromLeft (14);
+        auto top = r.removeFromTop (34);
+        wtTable->label.setBounds ({}); // the display shows the name
+        wtTable->box.setBounds (top.removeFromLeft (260).withSizeKeepingCentre (260, 30));
+        top.removeFromLeft (8);
+        importButton.setBounds (top.removeFromLeft (120).withSizeKeepingCentre (120, 30));
+        r.removeFromTop (4);
+        auto c = cellsOf (r, 3);
+        placeKnob (wtPos, c[0]);
+        placeChoice (wtWarpMode, c[1]);
+        placeKnob (wtWarp, c[2]);
+        backToObjectButton.setBounds (wt.bounds.getRight() - 170, wt.bounds.getY() + 8, 160, 26);
+    }
+    {
+        auto c = cellsOf (innerOf (osc.bounds), 4);
+        placeChoice (wtUnison, c[0]);
+        placeKnob (wtDetune, c[1]);
+        placeKnob (wtSpread, c[2]);
+        placeKnob (wtSub, c[3]);
+    }
+    {
+        auto c = cellsOf (innerOf (amp.bounds), 5);
+        placeKnob (attack, c[0]);
+        placeKnob (ampDecay, c[1]);
+        placeKnob (ampSustain, c[2]);
+        placeKnob (release, c[3]);
+        placeChoice (octave, c[4]);
+    }
+
+    layoutSharedSections (rowB, rowC);
+}
+
+void ImpossibleSynthEditor::layoutSharedSections (juce::Rectangle<int> filterArea, juce::Rectangle<int> modArea)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    auto placeChoice = [] (Choice* c, juce::Rectangle<int> cell)
+    {
+        c->label.setBounds (cell.removeFromTop (20));
+        c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 110), 30).translated (0, -10));
+    };
+
+    Section filter { "FILTER & DRIVE", Colours::filter, filterArea };
+    Section mod { "MODULATION", Colours::mod, modArea };
+    sections.push_back (filter);
+    sections.push_back (mod);
+
+    {
+        auto c = cellsOf (innerOf (filter.bounds), 6);
         placeChoice (filterMode, c[0]);
         placeKnob (cutoff, c[1]);
         placeKnob (resonance, c[2]);
@@ -483,57 +994,100 @@ void ImpossibleSynthEditor::layoutContent()
         placeKnob (body, c[5]);
     }
 
-    // Modulation: LFO 1 | LFO 2 | Mod Env | Matrix
-    subTitles.clear();
+    auto r = innerOf (mod.bounds);
+    for (int l = 0; l < kNumLfos; ++l)
     {
-        auto r = inner (sections[4]);
-        for (int l = 0; l < kNumLfos; ++l)
+        auto block = r.removeFromLeft (200);
+        r.removeFromLeft (16);
+        subTitles.push_back ({ block.removeFromTop (20), "LFO " + juce::String (l + 1) });
+        block.removeFromTop (4);
+        auto combos = block.removeFromLeft (100);
+        for (auto* c : { lfoShape[(size_t) l], lfoSync[(size_t) l], lfoRetrig[(size_t) l] })
         {
-            auto block = r.removeFromLeft (168);
-            r.removeFromLeft (14);
-            subTitles.push_back ({ block.removeFromTop (20), "LFO " + juce::String (l + 1) });
-            block.removeFromTop (4);
-            auto combos = block.removeFromLeft (90);
-            for (auto* c : { lfoShape[(size_t) l], lfoSync[(size_t) l], lfoRetrig[(size_t) l] })
-            {
-                c->label.setBounds (combos.removeFromTop (18));
-                c->box.setBounds (combos.removeFromTop (28));
-                combos.removeFromTop (8);
-            }
-            placeKnob (lfoRate[(size_t) l], block.withTrimmedTop (30).withTrimmedBottom (30));
+            c->label.setBounds (combos.removeFromTop (18));
+            c->box.setBounds (combos.removeFromTop (28));
+            combos.removeFromTop (8);
         }
-
-        auto envBlock = r.removeFromLeft (200);
-        r.removeFromLeft (14);
-        subTitles.push_back ({ envBlock.removeFromTop (20), "MOD ENV" });
-        envBlock.removeFromTop (30);
-        envBlock.removeFromBottom (30);
-        auto c = row (envBlock, 4);
-        placeKnob (envA, c[0]);
-        placeKnob (envD, c[1]);
-        placeKnob (envS, c[2]);
-        placeKnob (envR, c[3]);
-
-        subTitles.push_back ({ r.removeFromTop (20), "MATRIX" });
-        r.removeFromTop (4);
-        for (auto& m : modRows)
-        {
-            auto line = r.removeFromTop (28);
-            r.removeFromTop (5);
-            m.source.setBounds (line.removeFromLeft (92));
-            line.removeFromLeft (4);
-            m.target.setBounds (line.removeFromLeft (98));
-            line.removeFromLeft (6);
-            m.amount.setBounds (line);
-        }
+        placeKnob (lfoRate[(size_t) l], block.withTrimmedTop (30).withTrimmedBottom (30));
     }
 
+    auto envBlock = r.removeFromLeft (250);
+    r.removeFromLeft (16);
+    subTitles.push_back ({ envBlock.removeFromTop (20), "MOD ENV" });
+    envBlock.removeFromTop (30);
+    envBlock.removeFromBottom (30);
+    auto c = cellsOf (envBlock, 4);
+    placeKnob (envA, c[0]);
+    placeKnob (envD, c[1]);
+    placeKnob (envS, c[2]);
+    placeKnob (envR, c[3]);
+
+    subTitles.push_back ({ r.removeFromTop (20), "MATRIX" });
+    r.removeFromTop (3);
+    for (auto& m : modRows)
     {
-        auto r = inner (sections[5]);
-        auto top = r.removeFromTop (r.getHeight() / 2);
-        placeKnob (space, top.removeFromLeft (top.getWidth() / 2));
-        placeKnob (room, top);
-        placeKnob (output, r.withSizeKeepingCentre (r.getWidth() / 2, r.getHeight()));
+        auto line = r.removeFromTop (24);
+        r.removeFromTop (3);
+        m.source.setBounds (line.removeFromLeft (130));
+        line.removeFromLeft (4);
+        m.target.setBounds (line.removeFromLeft (140));
+        line.removeFromLeft (8);
+        m.amount.setBounds (line);
+    }
+}
+
+void ImpossibleSynthEditor::layoutMixPage (juce::Rectangle<int> page)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    auto placeChoice = [] (Choice* c, juce::Rectangle<int> cell)
+    {
+        c->label.setBounds (cell.removeFromTop (20));
+        c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 120), 28));
+    };
+
+    linksArea = page.removeFromBottom (150);
+    page.removeFromBottom (12);
+    sections.push_back ({ "HOW LAYERS LINK", Colours::macro, linksArea });
+
+    const int gap = 12;
+    const int w = (page.getWidth() - gap * (kNumLayers - 1)) / kNumLayers;
+    for (int i = 0; i < kNumLayers; ++i)
+    {
+        auto colBounds = page.removeFromLeft (i == kNumLayers - 1 ? page.getWidth() : w);
+        page.removeFromLeft (gap);
+        sections.push_back ({ "LAYER " + juce::String (i + 1), Colours::layers[i], colBounds });
+
+        auto& col = mixColumns[(size_t) i];
+        auto r = colBounds.reduced (12).withTrimmedTop (28);
+
+        auto top = r.removeFromTop (32);
+        col.power.setBounds (top.removeFromLeft (64));
+        top.removeFromLeft (8);
+        col.type->label.setBounds ({});
+        col.type->box.setBounds (top);
+        r.removeFromTop (10);
+
+        auto knobsRow = cellsOf (r.removeFromTop (110), 3);
+        placeKnob (col.volume, knobsRow[0]);
+        placeKnob (col.pan, knobsRow[1]);
+        placeKnob (col.fine, knobsRow[2]);
+        r.removeFromTop (6);
+
+        auto rangeRow = cellsOf (r.removeFromTop (52), 3);
+        placeChoice (col.octave, rangeRow[0]);
+        placeChoice (col.keyLow, rangeRow[1]);
+        placeChoice (col.keyHigh, rangeRow[2]);
+        r.removeFromTop (6);
+
+        auto velRow = cellsOf (r.removeFromTop (100).withTrimmedLeft (r.getWidth() / 6).withTrimmedRight (r.getWidth() / 6), 2);
+        placeKnob (col.velLow, velRow[0]);
+        placeKnob (col.velHigh, velRow[1]);
+
+        col.edit.setBounds (r.removeFromBottom (32));
     }
 }
 
@@ -542,13 +1096,13 @@ void ImpossibleSynthEditor::paintContent (juce::Graphics& g)
     g.fillAll (Colours::background);
 
     // Header.
-    auto header = juce::Rectangle<int> (0, 0, kBaseWidth, 60).reduced (24, 0);
+    auto header = juce::Rectangle<int> (0, 0, kBaseWidth, 56).reduced (24, 0);
     g.setColour (Colours::text);
     g.setFont (uiFont (26.0f, true));
     g.drawText ("IMPOSSIBLE SYNTH", header.removeFromLeft (300), juce::Justification::centredLeft);
     g.setColour (Colours::dim);
     g.setFont (uiFont (13.0f));
-    g.drawText ("v0.2", header.removeFromLeft (40), juce::Justification::centredLeft);
+    g.drawText ("v0.3", header.removeFromLeft (40), juce::Justification::centredLeft);
 
     for (auto& s : sections)
     {
@@ -561,7 +1115,14 @@ void ImpossibleSynthEditor::paintContent (juce::Graphics& g)
         g.setColour (s.colour);
         g.fillRoundedRectangle (r.getX() + 16.0f, r.getY() + 14.0f, 4.0f, 14.0f, 2.0f);
         g.setFont (uiFont (14.0f, true));
-        g.drawText (s.title, (int) r.getX() + 26, (int) r.getY() + 10, 200, 22, juce::Justification::centredLeft);
+        g.drawText (s.title, (int) r.getX() + 26, (int) r.getY() + 10, 300, 22, juce::Justification::centredLeft);
+    }
+
+    // Which layer is being edited.
+    if (view >= 0 && ! sections.empty())
+    {
+        g.setColour (Colours::layers[juce::jmax (0, boundLayer)].withAlpha (0.8f));
+        g.fillRect (16, 102, kBaseWidth - 32, 2);
     }
 
     g.setFont (uiFont (12.0f, true));
@@ -572,31 +1133,113 @@ void ImpossibleSynthEditor::paintContent (juce::Graphics& g)
         g.setColour (Colours::panelEdge);
         g.drawHorizontalLine (r.getBottom(), (float) r.getX(), (float) r.getRight());
     }
+
+    if (! linksArea.isEmpty())
+    {
+        auto r = linksArea.reduced (26, 12).withTrimmedTop (28);
+        const char* lines[] = {
+            "Macros: route Macro 1-4 in any layer's Matrix. One macro knob can move several layers at once (e.g. fade one layer in while another fades out).",
+            "Wavetable into Object: set a Physical layer's Exciter to Wavetable, then use Edit Wavetable to pick the table that gets played through the object.",
+            "Splits and switches: Key Low/High give each layer its own part of the keyboard; Vel Low/High swap layers depending on how hard you play.",
+            "Stacks: switch on more layers to play them together. Detune them slightly with Fine, or spread them with Pan, for a wider sound."
+        };
+        g.setFont (uiFont (13.5f));
+        for (auto* line : lines)
+        {
+            g.setColour (Colours::macro);
+            g.fillEllipse ((float) r.getX(), (float) r.getY() + 8.0f, 5.0f, 5.0f);
+            g.setColour (Colours::text.withAlpha (0.85f));
+            g.drawText (line, r.removeFromTop (22).withTrimmedLeft (14), juce::Justification::centredLeft);
+        }
+    }
 }
 
 void ImpossibleSynthEditor::timerCallback()
 {
-    // Grey out controls that currently do nothing.
-    auto value = [this] (const char* id) { return juce::roundToInt (processor.apvts.getRawParameterValue (id)->load()); };
-    const int ex = value ("exciter");
-    const bool continuous = ex == kBow || ex == kBreath || ex == kOsc;
-    const bool osc = ex == kOsc;
-    const bool filterOn = value ("filterMode") != kFilterOff;
+    // Tabs.
+    for (int t = 0; t <= kNumLayers; ++t)
+    {
+        auto& tab = tabs[(size_t) t];
+        const bool selected = (t == 0) ? view < 0 : view == t - 1;
+        bool changed = tab.selected != selected;
+        tab.selected = selected;
+        if (t > 0)
+        {
+            const bool on = rawValue (ImpossibleSynthProcessor::layerId (t - 1, "on")) > 0.5f;
+            const int type = juce::roundToInt (rawValue (ImpossibleSynthProcessor::layerId (t - 1, "type")));
+            const juce::String name = kLayerTypeNames[juce::jlimit (0, kNumLayerTypes - 1, type)];
+            changed = changed || tab.enabled != on || tab.engineName != name;
+            tab.enabled = on;
+            tab.engineName = name;
+        }
+        if (changed)
+            tab.repaint();
+    }
 
-    attack->slider.setEnabled (continuous);
-    oscWave->slider.setEnabled (osc);
-    unison->box.setEnabled (osc);
-    detune->slider.setEnabled (osc);
-    for (auto* k : { cutoff, resonance, filterEnv })
-        k->slider.setEnabled (filterOn);
-    lfoRate[0]->slider.setEnabled (value ("lfo1Sync") == 0);
-    lfoRate[1]->slider.setEnabled (value ("lfo2Sync") == 0);
+    if (view >= 0)
+    {
+        // The engine type changed (e.g. from the Engine box or a preset): switch page.
+        const int type = currentLayerType();
+        if (type != shownType)
+        {
+            showView (view, false);
+            return;
+        }
+
+        auto id = [this] (const char* base) { return ImpossibleSynthProcessor::layerId (boundLayer, base); };
+        const int ex = juce::roundToInt (rawValue (id ("exciter")));
+        const bool physical = type == kLayerPhysical;
+        const bool continuous = ex == kBow || ex == kBreath || ex == kOsc || ex == kExcWavetable;
+        const bool filterOn = juce::roundToInt (rawValue (id ("filterMode"))) != kFilterOff;
+
+        attack->slider.setEnabled (! physical || wavetableOverride || continuous);
+        oscWave->slider.setEnabled (ex == kOsc);
+        unison->box.setEnabled (ex == kOsc);
+        detune->slider.setEnabled (ex == kOsc);
+        for (auto* k : { cutoff, resonance, filterEnv })
+            k->slider.setEnabled (filterOn);
+        body->slider.setEnabled (physical);
+        ampDecay->slider.setEnabled (! physical);
+        ampSustain->slider.setEnabled (! physical);
+        lfoRate[0]->slider.setEnabled (juce::roundToInt (rawValue (id ("lfo1Sync"))) == 0);
+        lfoRate[1]->slider.setEnabled (juce::roundToInt (rawValue (id ("lfo2Sync"))) == 0);
+
+        const bool onPhysicalPage = physical && ! wavetableOverride;
+        editWavetableButton.setVisible (onPhysicalPage && ex == kExcWavetable);
+        if (wavetableOverride && ex != kExcWavetable)
+        {
+            showView (view, false); // exciter changed away from Wavetable
+            return;
+        }
+
+        wavetableDisplay.refresh();
+    }
 
     if (processor.getPresetName() != shownPresetName)
         refreshPresetList();
 }
 
 //==============================================================================
+void ImpossibleSynthEditor::importWavetable()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Import a wavetable", juce::File(), "*.wav;*.aif;*.aiff;*.flac");
+    juce::Component::SafePointer<ImpossibleSynthEditor> safeThis (this);
+    const int layer = boundLayer;
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safeThis, layer] (const juce::FileChooser& chooser)
+    {
+        if (safeThis == nullptr)
+            return;
+        const auto file = chooser.getResult();
+        if (! file.existsAsFile())
+            return;
+        if (! safeThis->processor.importWavetable (layer, file))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Import WAV",
+                                                    "Couldn't read that file as a wavetable.");
+        safeThis->wavetableDisplay.refresh();
+    });
+}
+
 void ImpossibleSynthEditor::refreshPresetList()
 {
     presetBox.clear (juce::dontSendNotification);

@@ -15,17 +15,44 @@ The `Standalone/Impossible Synth.exe` runs on its own without a DAW. Set your au
 
 The **Demo-Sounds** artifact has a WAV render of every factory preset, made by the automated build (dry, without reverb).
 
+## Layers
+
+Every sound has **4 layers**. Each layer is its own synth, with its own engine, filter, drive and modulation:
+
+- **Physical**: hit, pluck, bow or blow into a virtual object (the original Impossible engine).
+- **Wavetable**: scan through wavetables, with warps, unison and a sub oscillator.
+
+Use the tabs at the top: **MIX** shows all four layers side by side, and **LAYER 1-4** open each layer's page. Click a tab's dot to switch that layer on or off. The **Engine** box (top right) changes the selected layer between Physical and Wavetable.
+
+**Mix page**, per layer: on/off, engine, **Volume**, **Pan**, **Fine** tune, **Octave**, **Key Low/High** (keyboard splits) and **Vel Low/High** (velocity switching), plus **Edit** to jump to its page.
+
+**How layers link**
+- **Macros**: the 4 Macro knobs at the bottom are sources in every layer's Matrix, so one knob can move several layers at once. For example, Macro 1 can fade one layer in while turning another layer's material from glass to wood.
+- **Wavetable into Object**: set a Physical layer's **Exciter** to **Wavetable**. The wavetable is then played *through* the object. Click **Edit Wavetable** to choose the table.
+- **Splits and switches**: key and velocity ranges per layer.
+- **Stacks**: switch on several layers and detune them with Fine or spread them with Pan.
+
+Sounds and songs saved with earlier versions load into layer 1, unchanged.
+
+## Wavetables
+
+16 built-in tables: Basic Shapes, PWM, Saw Sync, Vowels, Harmonic Sweep, Organ, FM Growl, FM Bell, Wavefold, Steps, Chaos, Spectral Noise, Comb Saw, Bitwise, and two made from the Physical engine's own resonances: **Object Morph** (string → bell) and **Glass Spectrum** (rubber → glass).
+
+**Import WAV** loads your own wavetables: Serum/Vital-style files with 2048 samples per frame (up to 256 frames), or any short single-cycle waveform. The file's location is saved with the sound, so keep the WAV where it is.
+
+Wavetable page controls: **Table**, **Position** (scan through frames), **Warp** mode (Bend, Sync, Mirror, Squeeze, Fold, Crush, FM) and **Warp Amt**, **Unison** (up to 7), **Detune**, **Spread**, **Sub**, and an **Amp** envelope (Attack, Decay, Sustain, Release).
+
 ## Presets
 
-The bar at the top has 24 factory presets (keys, plucks, pads, basses, leads and textures). Use **<** and **>** to step through them. FL Studio's own preset menu lists them too.
+The bar at the top has 38 factory presets: keys, plucks, pads, basses, leads, textures, wavetable sounds and layered stacks. Use **<** and **>** to step through them. FL Studio's own preset menu lists them too.
 
 - **Save** stores the current sound in `Documents\Impossible Synth\Presets`. Saved sounds appear under **User** in the preset list.
-- **Randomize** rolls a new random sound. It's tuned to give usable results rather than pure noise.
+- **Randomize** rolls a new random sound, often with two or three layers. It's tuned to give usable results rather than pure noise.
 
-## Controls
+## Physical layer controls
 
 **Excite**: how you play the object
-- **Exciter**: Strike (mallet), Pluck, Bow, Breath, or **Osc**, a normal synth oscillator fed into the object. Bow, Breath and Osc keep sounding while you hold the key.
+- **Exciter**: Strike (mallet), Pluck, Bow, Breath, **Osc** (a normal synth oscillator fed into the object) or **Wavetable** (the layer's wavetable fed into the object). Bow, Breath, Osc and Wavetable keep sounding while you hold the key.
 - **Attack**: fade-in time for Bow, Breath and Osc.
 - **Hardness**: mallet hardness / brightness. Key velocity adds to it.
 - **Position**: where you hit the object. This changes which overtones ring.
@@ -46,25 +73,28 @@ The bar at the top has 24 factory presets (keys, plucks, pads, basses, leads and
 - **Fracture**: overtones split apart and beat against each other, like the object cracking.
 - **Evolve**: how fast Bloom, Drift, Transmute and Fracture happen.
 
-**Filter & Drive**: applied to each note
+**Filter & Drive** (both layer types): applied to each note
 - **Filter**: Off, Low Pass, Band Pass, High Pass or Notch, with **Cutoff** and **Resonance**.
 - **Env Amt**: how much the Mod Env sweeps the cutoff.
 - **Drive**: distortion before the filter.
 - **Body**: how much of the sound goes through the object. Turn it down to hear the raw oscillator, bow or breath. Useful for basses and leads.
 
-**Modulation**: make things move
+**Modulation** (both layer types): make things move
 - **LFO 1 / LFO 2**: Sine, Triangle, Saw Up/Down, Square, S&H (random steps) or Drift (smooth random). **Sync** locks the LFO to the song tempo. **Mode** is Free (all notes share one LFO) or Retrig (restarts with each note).
 - **Mod Env**: an ADSR envelope that starts with each note.
-- **Matrix**: six slots. Each one routes a **source** (LFO 1, LFO 2, Mod Env, Velocity, Mod Wheel, Note, Random) to a **target** (Pitch, Volume, any Excite/Object/Impossible knob, Cutoff, Resonance, Drive, Body) with an **amount**. For example, LFO 1 → Material makes the object wobble between wood and glass.
+- **Matrix**: six slots. Each one routes a **source** (LFO 1, LFO 2, Mod Env, Velocity, Mod Wheel, Note, Random, Macro 1-4) to a **target** (Pitch, Volume, Pan, any Excite/Object/Impossible knob, WT Position, WT Warp, Cutoff, Resonance, Drive, Body) with an **amount**. For example, LFO 1 → Material makes the object wobble between wood and glass.
 
-**Space**
+**Global** (bottom strip)
+- **Macro 1-4**: see *How layers link*.
 - **Space**: reverb amount. **Room**: reverb size. **Output**: volume.
 
-Double-click any knob to reset it. Hover over a control for a short explanation. Greyed-out controls don't affect the current settings. Sustain pedal, pitch bend (±2 semitones) and mod wheel work. Up to 12 notes at once. Drag the bottom-right corner to resize the window.
+Double-click any knob to reset it. Hover over a control for a short explanation. Greyed-out controls don't affect the current settings. Sustain pedal, pitch bend (±2 semitones) and mod wheel work. Up to 12 notes at once per layer. Drag the bottom-right corner to resize the window.
 
 ## How it works
 
 Every note is a bank of 32 resonators, one per mode (a natural vibration frequency of the object). Each mode is a pair of resonators so it can split apart for Fracture. Shape sets the modes' frequency ratios. Material sets how bright they start and how fast each one dies away. The exciter feeds energy in: an instant hit for Strike and Pluck, or a continuous signal for Bow, Breath and Osc. The Impossible controls and the modulation matrix change the mode frequencies, decay rates and loudness while the note is still ringing. Each note then has its own drive and filter.
+
+Wavetable layers read band-limited copies of each frame (fewer harmonics for higher notes), so high notes don't alias.
 
 The sound engine (`Source/dsp/`) is plain C++ with no JUCE dependency. The plugin wrapper and UI use [JUCE](https://juce.com) 8, which is downloaded automatically when you build.
 
@@ -84,6 +114,8 @@ The plugin ends up in `build/ImpossibleSynth_artefacts/Release/VST3/`.
 ```bash
 ./build/render_test demo-sounds        # Windows: build\Release\render_test.exe demo-sounds
 ```
+
+With `-DIMPOSSIBLE_UI_SNAPSHOT=ON` two more developer tools are built: `state_test` (checks saving and loading, including old saves) and `ui_snapshot` (renders every UI tab to PNG files).
 
 ## License
 

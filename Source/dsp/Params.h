@@ -3,6 +3,10 @@
 // Every synth setting, in one place. Plain C++ (no JUCE) so the engine,
 // presets and offline tests all share it. The plugin builds its parameter
 // list from the IDs, ranges and defaults defined here.
+//
+// A Patch has 4 layers. Each layer is either a Physical (modal) engine or a
+// Wavetable engine, with its own filter, drive and modulation. Plugin
+// parameter IDs for layer settings are prefixed: "L1_shape", "L2_wtPos", ...
 
 #include <array>
 #include <cmath>
@@ -10,17 +14,23 @@
 namespace impossible
 {
 
+constexpr int kNumLayers = 4;
 constexpr int kNumLfos = 2;
 constexpr int kNumModSlots = 6;
+constexpr int kNumMacros = 4;
 constexpr int kMaxUnison = 7;
 
-enum Exciter { kStrike, kPluck, kBow, kBreath, kOsc, kNumExciters };
+enum LayerType { kLayerPhysical, kLayerWavetable, kNumLayerTypes };
+enum Exciter { kStrike, kPluck, kBow, kBreath, kOsc, kExcWavetable, kNumExciters };
 enum FilterMode { kFilterOff, kFilterLP, kFilterBP, kFilterHP, kFilterNotch, kNumFilterModes };
 enum LfoShape { kLfoSine, kLfoTriangle, kLfoSawUp, kLfoSawDown, kLfoSquare, kLfoSampleHold, kLfoDrift, kNumLfoShapes };
+enum WarpMode { kWarpOff, kWarpBend, kWarpSync, kWarpMirror, kWarpSqueeze, kWarpFold, kWarpCrush, kWarpFM, kNumWarpModes };
 
+// New entries are only ever appended, so older presets keep their meaning.
 enum ModSource
 {
     kSrcOff, kSrcLfo1, kSrcLfo2, kSrcEnv, kSrcVelocity, kSrcModWheel, kSrcNote, kSrcRandom,
+    kSrcMacro1, kSrcMacro2, kSrcMacro3, kSrcMacro4,
     kNumSources
 };
 
@@ -30,16 +40,24 @@ enum ModTarget
     kDstHardness, kDstPosition, kDstShape, kDstMaterial, kDstSize, kDstDecay,
     kDstBloom, kDstDrift, kDstTransmute, kDstFracture,
     kDstOscWave, kDstDetune, kDstBody, kDstCutoff, kDstResonance, kDstDrive,
+    kDstWtPos, kDstWtWarp, kDstPan,
     kNumTargets
 };
 
-inline const char* const kExciterNames[kNumExciters] = { "Strike", "Pluck", "Bow", "Breath", "Osc" };
+inline const char* const kLayerTypeNames[kNumLayerTypes] = { "Physical", "Wavetable" };
+inline const char* const kOnOffNames[2] = { "Off", "On" };
+inline const char* const kExciterNames[kNumExciters] = { "Strike", "Pluck", "Bow", "Breath", "Osc", "Wavetable" };
 inline const char* const kFilterModeNames[kNumFilterModes] = { "Off", "Low Pass", "Band Pass", "High Pass", "Notch" };
 inline const char* const kLfoShapeNames[kNumLfoShapes] = { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Drift" };
-inline const char* const kSourceNames[kNumSources] = { "Off", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Random" };
+inline const char* const kWarpNames[kNumWarpModes] = { "Off", "Bend", "Sync", "Mirror", "Squeeze", "Fold", "Crush", "FM" };
+inline const char* const kSourceNames[kNumSources] = {
+    "Off", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Random",
+    "Macro 1", "Macro 2", "Macro 3", "Macro 4"
+};
 inline const char* const kTargetNames[kNumTargets] = {
     "Off", "Pitch", "Volume", "Hardness", "Position", "Shape", "Material", "Size", "Decay",
-    "Bloom", "Drift", "Transmute", "Fracture", "Osc Wave", "Detune", "Body", "Cutoff", "Resonance", "Drive"
+    "Bloom", "Drift", "Transmute", "Fracture", "Osc Wave", "Detune", "Body", "Cutoff", "Resonance", "Drive",
+    "WT Position", "WT Warp", "Pan"
 };
 inline const char* const kOctaveNames[5] = { "-2", "-1", "0", "+1", "+2" };
 inline const char* const kUnisonNames[kMaxUnison] = { "1", "2", "3", "4", "5", "6", "7" };
@@ -108,32 +126,44 @@ inline constexpr Range envDecay { 0.005f, 10.0f, 0.5f };
 inline constexpr Range envSustain { 0.0f, 1.0f };
 inline constexpr Range envRelease { 0.005f, 10.0f, 0.5f };
 inline constexpr Range modAmount { -1.0f, 1.0f };
+inline constexpr Range wtPos { 0.0f, 1.0f };
+inline constexpr Range wtWarp { 0.0f, 1.0f };
+inline constexpr Range wtDetune { 0.0f, 1.0f };
+inline constexpr Range wtSpread { 0.0f, 1.0f };
+inline constexpr Range wtSub { 0.0f, 1.0f };
+inline constexpr Range ampDecay { 0.005f, 10.0f, 0.5f };
+inline constexpr Range ampSustain { 0.0f, 1.0f };
+inline constexpr Range volume { -36.0f, 6.0f };
+inline constexpr Range pan { -1.0f, 1.0f };
+inline constexpr Range fine { -100.0f, 100.0f };
+inline constexpr Range velocity { 0.0f, 1.0f };
+inline constexpr Range macro { 0.0f, 1.0f };
 inline constexpr Range space { 0.0f, 1.0f };
 inline constexpr Range room { 0.0f, 1.0f };
 inline constexpr Range output { -36.0f, 6.0f };
 } // namespace ranges
 
-// All settings. Choice settings hold the index of the selected option.
-struct Params
+// One layer's settings. Choice settings hold the index of the selected option.
+struct LayerParams
 {
-    // Excite
+    // Excite (Physical)
     int exciter = kStrike;
-    float attack = 0.04f;   // fade-in for Bow / Breath / Osc
+    float attack = 0.04f;   // fade-in for Bow / Breath / Osc / Wavetable, and the Wavetable amp attack
     float hardness = 0.5f;
     float position = 0.2f;
     float oscWave = 0.66f;  // Sine → Triangle → Saw → Square
     int unison = 0;         // index: 0 = 1 voice ... 6 = 7 voices
     float detune = 0.25f;
 
-    // Object
+    // Object (Physical)
     float shape = 0.5f;     // String → Tube → Bar → Plate → Bell
     float material = 0.6f;  // Rubber → Wood → Metal → Glass
     float size = 0.5f;
     float decay = 1.0f;
-    float release = 1.0f;
+    float release = 1.0f;   // also the Wavetable amp release
     int octave = 2;         // index: 0 = -2 ... 4 = +2
 
-    // Impossible
+    // Impossible (Physical)
     float bloom = 0.0f;
     float drift = 0.0f;
     float transmute = 0.0f;
@@ -161,10 +191,28 @@ struct Params
     std::array<int, kNumModSlots> modTarget {};
     std::array<float, kNumModSlots> modAmount {};
 
-    // Space & output (handled by the plugin, not the voice engine)
-    float space = 0.25f;
-    float room = 0.6f;
-    float output = 0.0f;
+    // Layer
+    int enabled = 0;
+    int type = kLayerPhysical;
+    float volume = 0.0f;    // dB
+    float pan = 0.0f;
+    float fine = 0.0f;      // cents
+    int keyLow = 0;
+    int keyHigh = 127;
+    float velLow = 0.0f;
+    float velHigh = 1.0f;
+
+    // Wavetable
+    int wtTable = 0;
+    float wtPos = 0.0f;
+    int wtWarpMode = kWarpOff;
+    float wtWarp = 0.0f;
+    int wtUnison = 0;
+    float wtDetune = 0.2f;
+    float wtSpread = 0.7f;
+    float wtSub = 0.0f;
+    float ampDecay = 1.0f;
+    float ampSustain = 1.0f;
 
     // Convenience: set one modulation slot.
     void mod (int slot, int source, int target, float amount)
@@ -175,10 +223,28 @@ struct Params
     }
 };
 
-// Calls f(id, field) for every setting. This is the single list that links
-// plugin parameter IDs to Params fields (used for reading, writing, presets).
-template <typename P, typename F>
-void visitParams (P& p, F&& f)
+// A whole sound: 4 layers plus global settings.
+struct Patch
+{
+    std::array<LayerParams, kNumLayers> layers;
+    std::array<float, kNumMacros> macros {};
+    float space = 0.25f;
+    float room = 0.6f;
+    float output = 0.0f;
+
+    Patch()
+    {
+        // Layer 1 starts on; the others start off with alternating engines,
+        // so switching one on gives you the other engine type.
+        for (int i = 0; i < kNumLayers; ++i)
+            layers[(size_t) i].type = (i % 2 == 0) ? kLayerPhysical : kLayerWavetable;
+        layers[0].enabled = 1;
+    }
+};
+
+// Calls f(id, field) for every setting of one layer (IDs without the layer prefix).
+template <typename L, typename F>
+void visitLayer (L& p, F&& f)
 {
     static const char* const lfoShapeIds[kNumLfos] = { "lfo1Shape", "lfo2Shape" };
     static const char* const lfoRateIds[kNumLfos] = { "lfo1Rate", "lfo2Rate" };
@@ -236,9 +302,43 @@ void visitParams (P& p, F&& f)
         f (modAmtIds[i], p.modAmount[(size_t) i]);
     }
 
-    f ("space", p.space);
-    f ("room", p.room);
-    f ("output", p.output);
+    f ("on", p.enabled);
+    f ("type", p.type);
+    f ("volume", p.volume);
+    f ("pan", p.pan);
+    f ("fine", p.fine);
+    f ("keyLow", p.keyLow);
+    f ("keyHigh", p.keyHigh);
+    f ("velLow", p.velLow);
+    f ("velHigh", p.velHigh);
+
+    f ("wtTable", p.wtTable);
+    f ("wtPos", p.wtPos);
+    f ("wtWarpMode", p.wtWarpMode);
+    f ("wtWarp", p.wtWarp);
+    f ("wtUnison", p.wtUnison);
+    f ("wtDetune", p.wtDetune);
+    f ("wtSpread", p.wtSpread);
+    f ("wtSub", p.wtSub);
+    f ("ampDecay", p.ampDecay);
+    f ("ampSustain", p.ampSustain);
+}
+
+// Calls f(layer, id, field) for every setting in the patch. layer is 0..3 for
+// layer settings and -1 for global ones.
+template <typename P, typename F>
+void visitPatch (P& p, F&& f)
+{
+    for (int i = 0; i < kNumLayers; ++i)
+        visitLayer (p.layers[(size_t) i], [&] (const char* id, auto& field) { f (i, id, field); });
+
+    static const char* const macroIds[kNumMacros] = { "macro1", "macro2", "macro3", "macro4" };
+    for (int i = 0; i < kNumMacros; ++i)
+        f (-1, macroIds[i], p.macros[(size_t) i]);
+
+    f (-1, "space", p.space);
+    f (-1, "room", p.room);
+    f (-1, "output", p.output);
 }
 
 } // namespace impossible

@@ -74,12 +74,12 @@ void writeWav (const std::string& path, const std::vector<float>& l, const std::
 }
 
 // Renders notes through the engine. Output gain is applied, reverb is not.
-Result render (const Params& params, const std::vector<Note>& notes, double seconds,
+Result render (const Patch& params, const std::vector<Note>& notes, double seconds,
                std::vector<float>* outL = nullptr, std::vector<float>* outR = nullptr)
 {
     Engine engine;
     engine.prepare (kSampleRate);
-    engine.setParams (params);
+    engine.setPatch (params);
 
     const int total = (int) (seconds * kSampleRate);
     std::vector<float> L ((size_t) total), R ((size_t) total);
@@ -173,9 +173,10 @@ int main (int argc, char** argv)
     for (auto& preset : factoryPresets())
     {
         const bool bass = preset.name.find ("Bass") != std::string::npos || preset.name.find ("Sub") != std::string::npos
-                          || preset.name.find ("Growl") != std::string::npos;
+                          || preset.name.find ("Growl") != std::string::npos
+                          || preset.name.find ("Split") != std::string::npos;
         std::vector<float> L, R;
-        const Result res = render (preset.params, testPhrase (bass), 7.0, &L, &R);
+        const Result res = render (preset.patch, testPhrase (bass), 7.0, &L, &R);
         audioSeconds += 7.0;
 
         const double rmsDb = 20.0 * std::log10 (std::max (1.0e-9, res.rms));
@@ -200,7 +201,7 @@ int main (int argc, char** argv)
     const int numRandom = 300;
     for (int i = 0; i < numRandom; ++i)
     {
-        const Params p = randomPatch (rng);
+        const Patch p = randomPatch (rng);
         const Result res = render (p, testPhrase (false), 5.0);
         audioSeconds += 5.0;
         worstPeak = std::max (worstPeak, res.peak);
