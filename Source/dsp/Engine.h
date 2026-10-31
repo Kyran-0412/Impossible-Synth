@@ -42,15 +42,27 @@ private:
     uint32_t state = 0x9E3779B9u;
 };
 
+// What the UI shows for a layer: the newest note's cell grid and particles.
+// Written by the audio thread, read by the editor.
+struct LayerDisplay
+{
+    std::array<std::atomic<uint32_t>, kCellRows> cells {};          // one bit per cell
+    std::array<std::atomic<uint32_t>, kMaxParticles> particles {};  // x (high 16 bits), y (low 16 bits)
+    std::atomic<int> particleCount { 0 };
+};
+
 // Shared, per-render-call information the voices of one layer need.
 struct ModContext
 {
+    double bpm = 120.0;
     float bend = 0.0f;                        // semitones
     float modWheel = 0.0f;                    // 0..1
     std::array<float, kNumMacros> macros {};  // 0..1
     std::array<double, kNumLfos> lfoPhase {}; // free-running LFO phase (cycles) at the start of this render call
     std::array<float, kNumLfos> lfoHz {};
     const Wavetable* table = nullptr;         // this layer's wavetable
+    LayerDisplay* display = nullptr;          // where the newest voice publishes its state
+    uint64_t newestAge = 0;                   // age of the newest voice in this layer
 };
 
 class Voice
@@ -78,6 +90,20 @@ private:
     LayerParams applyModulation (const LayerParams& p, const ModContext& ctx, int sampleInCall);
     void updateWavetable (const LayerParams& m, const ModContext& ctx, float f0);
     void renderWavetable (float& outL, float& outR, float& mono, const ModContext& ctx);
+
+    void seedCells (const LayerParams& p);
+    void stepCells (const LayerParams& m);
+    void buildCellWave (float f0);
+    void updateCells (const LayerParams& m, const ModContext& ctx, float f0);
+    void renderCells (float& outL, float& outR, float& mono);
+
+    void initSwarm (const LayerParams& p);
+    void updateSwarm (const LayerParams& m, const ModContext& ctx, float f0, float dt);
+    void renderSwarm (float& outL, float& outR, float& mono);
+
+    void renderSub (float& outL, float& outR, float& mono);
+    void renderSource (int source, float& outL, float& outR, float& mono, const ModContext& ctx);
+    void publish (const ModContext& ctx);
     void excite (float vel);
 
     double sr = 44100.0;
@@ -108,6 +134,31 @@ private:
     float wtFrame = 0.0f, wtFrameTarget = 0.0f, wtFrameStep = 0.0f;
     float subPhase = 0.0f, subInc = 0.0f, subLevel = 0.0f;
     float wtGain = 1.0f;
+
+    // Cells: a toroidal Game-of-Life-style grid. Each generation is turned into
+    // a single-cycle waveform (columns = harmonics, rows = stereo position);
+    // the oscillator crossfades from the previous generation's waveform.
+    static constexpr int kCellTable = 512;
+    std::array<uint32_t, kCellRows> grid {};
+    Rng cellRng;
+    double cellClock = 0.0;  // fraction of the way to the next generation
+    float cellFade = 1.0f, cellFadeInc = 1.0f;
+    float cellPhase = 0.0f, cellInc = 0.0f, cellTiltNow = 1.0f;
+    float cellF0 = 0.0f;
+    std::array<std::array<float, kCellTable + 1>, 2> cellWaveL {}, cellWaveR {}; // [0] previous, [1] current
+    bool cellsDirty = true;
+
+    // Swarm: particles moving in (pitch in octaves, stereo) space.
+    struct Particle
+    {
+        float x = 0.0f, y = 0.0f, vx = 0.0f, vy = 0.0f;
+        float homeX = 0.0f, homeY = 0.0f;
+        float phase = 0.0f, inc = 0.0f, amp = 0.0f, panL = 0.7f, panR = 0.7f;
+    };
+    std::array<Particle, kMaxParticles> particles {};
+    int particleCount = 16;
+    float swarmWave = 0.0f;
+    Rng swarmRng;
 
     // Modulation state.
     int envStage = 0; // mod envelope: 0 attack, 1 decay/sustain, 2 release
@@ -153,6 +204,7 @@ public:
 
     // The shared context plus this layer's LFO clocks.
     ModContext context (const ModContext& shared, double bpm, bool hostPlaying, double ppq) const;
+    uint64_t newestAge() const;
 
     void noteOn (int note, float velocity, const ModContext& ctx);
     void noteOff (int note, bool sustainDown);
@@ -202,12 +254,16 @@ public:
 
     int activeVoiceCount() const;
 
+    // Live state for the UI (cells grid, particles) of one layer.
+    const LayerDisplay& display (int layer) const { return displays[(size_t) layer]; }
+
 private:
     const Wavetable* tableFor (int layer) const;
 
     std::array<LayerEngine, kNumLayers> layers;
     std::array<bool, kNumLayers> wasEnabled {};
     std::array<std::atomic<const Wavetable*>, kNumLayers> imported {};
+    std::array<LayerDisplay, kNumLayers> displays;
     ModContext shared;
     double sr = 44100.0;
     double bpm = 120.0;

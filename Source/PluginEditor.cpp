@@ -284,6 +284,112 @@ void WavetableDisplay::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+void CellsDisplay::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (Colours::background);
+    g.fillRoundedRectangle (bounds, 8.0f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.0f);
+
+    const auto* d = getDisplay ? getDisplay() : nullptr;
+    auto area = bounds.reduced (10.0f).withTrimmedTop (16.0f).withTrimmedBottom (14.0f);
+    const float cw = area.getWidth() / (float) impossible::kCellCols;
+    const float ch = area.getHeight() / (float) impossible::kCellRows;
+
+    bool any = false;
+    for (int y = 0; y < impossible::kCellRows; ++y)
+    {
+        const uint32_t row = d != nullptr ? d->cells[(size_t) y].load (std::memory_order_relaxed) : 0u;
+        for (int x = 0; x < impossible::kCellCols; ++x)
+        {
+            const auto cell = juce::Rectangle<float> (area.getX() + x * cw, area.getY() + y * ch, cw, ch).reduced (1.0f);
+            if ((row >> x) & 1u)
+            {
+                any = true;
+                g.setColour (colour.withAlpha (0.55f + 0.45f * (1.0f - (float) x / impossible::kCellCols)));
+                g.fillRoundedRectangle (cell, 1.5f);
+            }
+            else
+            {
+                g.setColour (Colours::panel);
+                g.fillRoundedRectangle (cell, 1.5f);
+            }
+        }
+    }
+
+    g.setFont (uiFont (12.0f, true));
+    g.setColour (Colours::text);
+    g.drawText ("LIFE", bounds.reduced (12.0f, 2.0f).removeFromTop (18.0f), juce::Justification::centredLeft);
+    g.setColour (Colours::dim);
+    g.setFont (uiFont (11.0f));
+    g.drawText (juce::String::fromUTF8 ("low  \xe2\x86\x90  harmonics  \xe2\x86\x92  high"),
+                bounds.reduced (12.0f, 2.0f).removeFromBottom (14.0f), juce::Justification::centred);
+    if (! any)
+    {
+        g.setColour (Colours::text.withAlpha (0.7f));
+        g.setFont (uiFont (13.0f));
+        g.drawText ("Play a note to start life", area, juce::Justification::centred);
+    }
+}
+
+void SwarmDisplay::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (Colours::background);
+    g.fillRoundedRectangle (bounds, 8.0f);
+    g.setColour (Colours::panelEdge);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.0f);
+
+    auto area = bounds.reduced (12.0f).withTrimmedTop (14.0f).withTrimmedBottom (12.0f);
+    // Show pitch from 1 octave below the note to 5 above.
+    constexpr float lo = -1.0f, hi = 5.0f;
+    auto xFor = [&] (float octaves) { return area.getX() + (octaves - lo) / (hi - lo) * area.getWidth(); };
+
+    g.setFont (uiFont (10.5f));
+    for (int o = 0; o <= 4; ++o)
+    {
+        const float x = xFor ((float) o);
+        g.setColour (Colours::panelEdge);
+        g.drawVerticalLine ((int) x, area.getY(), area.getBottom());
+        g.setColour (Colours::dim);
+        g.drawText (o == 0 ? juce::String ("note") : "+" + juce::String (o), (int) x - 20, (int) area.getBottom(), 40, 12,
+                    juce::Justification::centred);
+    }
+
+    const auto* d = getDisplay ? getDisplay() : nullptr;
+    const int count = d != nullptr ? d->particleCount.load (std::memory_order_relaxed) : 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const uint32_t packed = d->particles[(size_t) i].load (std::memory_order_relaxed);
+        const float px = (float) (packed >> 16) / 65535.0f * 8.0f - 3.0f;
+        const float py = (float) (packed & 0xffffu) / 65535.0f * 2.0f - 1.0f;
+        if (px < lo || px > hi)
+            continue;
+        const float x = xFor (px);
+        const float y = area.getCentreY() - py * area.getHeight() * 0.45f;
+        g.setColour (colour.withAlpha (0.18f));
+        g.fillEllipse (x - 7.0f, y - 7.0f, 14.0f, 14.0f);
+        g.setColour (colour);
+        g.fillEllipse (x - 3.0f, y - 3.0f, 6.0f, 6.0f);
+    }
+
+    g.setFont (uiFont (12.0f, true));
+    g.setColour (Colours::text);
+    g.drawText ("SWARM", bounds.reduced (12.0f, 2.0f).removeFromTop (16.0f), juce::Justification::centredLeft);
+    g.setColour (Colours::dim);
+    g.setFont (uiFont (11.0f));
+    g.drawText (juce::String::fromUTF8 ("pitch \xe2\x86\x92   \xc2\xb7   up/down = stereo"), bounds.reduced (12.0f, 2.0f).removeFromTop (16.0f),
+                juce::Justification::centredRight);
+    if (count == 0)
+    {
+        g.setColour (Colours::text.withAlpha (0.7f));
+        g.setFont (uiFont (13.0f));
+        g.drawText ("Play a note to release the swarm", area, juce::Justification::centred);
+    }
+}
+
+//==============================================================================
 void LayerTab::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat().reduced (1.0f);
@@ -367,7 +473,7 @@ ImpossibleSynthEditor::ImpossibleSynthEditor (ImpossibleSynthProcessor& p)
         addKnobTo (physicalComponents, k);
     for (auto* c : { exciter, unison, octave })
         addChoiceTo (physicalComponents, c);
-    physicalComponents.push_back (&editWavetableButton);
+    physicalComponents.push_back (&editSourceButton);
 
     // ---- Wavetable page ----
     wtTable = &addChoice ("wtTable", "Table", "Built-in wavetables, or Imported for a WAV you loaded.");
@@ -398,10 +504,54 @@ ImpossibleSynthEditor::ImpossibleSynthEditor (ImpossibleSynthProcessor& p)
     wavetableComponents.push_back (&importButton);
     wavetableComponents.push_back (&backToObjectButton);
 
-    editWavetableButton.setTooltip ("This layer's exciter is a wavetable: edit it.");
-    editWavetableButton.onClick = [this] { showView (view, true); };
-    content.addChildComponent (editWavetableButton);
-    backToObjectButton.onClick = [this] { showView (view, false); };
+    // ---- Cells page ----
+    cellRule = &addChoice ("cellRule", "Rule", "The rules of life: how many neighbours make a cell be born or survive.");
+    cellSeed = &addChoice ("cellSeed", "Seed", "The starting pattern each note begins with.");
+    cellSync = &addChoice ("cellSync", "Sync", "Free uses Speed. Note values step the grid in time with the song.");
+    cellDensity = &addKnob ("cellDensity", "Density", Colours::wavetable, "How full the starting grid is (Random/Symmetric seeds; number of Gliders/Spaceships).");
+    cellSpeed = &addKnob ("cellSpeed", "Speed", Colours::wavetable, "Generations per second (when Sync is Free).");
+    cellGlide = &addKnob ("cellGlide", "Glide", Colours::wavetable, "Smooth blend between generations. 0 = hard steps.");
+    cellTilt = &addKnob ("cellTilt", "Tilt", Colours::wavetable, "Darker (right) or brighter (left): how much quieter the high harmonics are.");
+    cellMutate = &addKnob ("cellMutate", "Mutate", Colours::wavetable, "Randomly flips cells each generation so life never settles.");
+    cellsDisplay.colour = Colours::wavetable;
+    cellsDisplay.getDisplay = [this] { return boundLayer >= 0 ? &processor.getDisplay (boundLayer) : nullptr; };
+    content.addAndMakeVisible (cellsDisplay);
+
+    for (auto* k : { cellDensity, cellSpeed, cellGlide, cellTilt, cellMutate, wtSub, attack, ampDecay, ampSustain, release })
+        addKnobTo (cellsComponents, k);
+    for (auto* c : { cellRule, cellSeed, cellSync, octave })
+        addChoiceTo (cellsComponents, c);
+    cellsComponents.push_back (&cellsDisplay);
+    cellsComponents.push_back (&backToObjectButton);
+
+    // ---- Swarm page ----
+    swarmCount = &addChoice ("swarmCount", "Particles", "How many particles (each one is a tiny oscillator).");
+    swarmHome = &addChoice ("swarmHome", "Home", "The notes the particles are pulled toward.");
+    swarmPull = &addKnob ("swarmPull", "Pull", Colours::wavetable, "Gravity toward the home notes. High = clean tone, low = free-floating cloud.");
+    swarmChaos = &addKnob ("swarmChaos", "Chaos", Colours::wavetable, "Random kicks that knock the particles around.");
+    swarmFlock = &addKnob ("swarmFlock", "Flock", Colours::wavetable, "Right: particles clump together. Left: they scatter apart.", true);
+    swarmSpread = &addKnob ("swarmSpread", "Spread", Colours::wavetable, "Squeeze the home notes together (left) or stretch them apart (right). Middle = exact.");
+    swarmSpeed = &addKnob ("swarmSpeed", "Speed", Colours::wavetable, "How fast the whole swarm moves.");
+    swarmWave = &addKnob ("swarmWave", "Wave", Colours::wavetable, "Each particle's waveform: Sine, Triangle, Saw.");
+    swarmDisplay.colour = Colours::wavetable;
+    swarmDisplay.getDisplay = [this] { return boundLayer >= 0 ? &processor.getDisplay (boundLayer) : nullptr; };
+    content.addAndMakeVisible (swarmDisplay);
+
+    for (auto* k : { swarmPull, swarmChaos, swarmFlock, swarmSpread, swarmSpeed, swarmWave, wtSub, attack, ampDecay, ampSustain, release })
+        addKnobTo (swarmComponents, k);
+    for (auto* c : { swarmCount, swarmHome, octave })
+        addChoiceTo (swarmComponents, c);
+    swarmComponents.push_back (&swarmDisplay);
+    swarmComponents.push_back (&backToObjectButton);
+
+    editSourceButton.setTooltip ("This layer's exciter comes from another engine: edit it.");
+    editSourceButton.onClick = [this]
+    {
+        const int ex = juce::roundToInt (rawValue (ImpossibleSynthProcessor::layerId (boundLayer, "exciter")));
+        showView (view, ex == kExcWavetable ? kLayerWavetable : ex == kExcCells ? kLayerCells : kLayerSwarm);
+    };
+    content.addChildComponent (editSourceButton);
+    backToObjectButton.onClick = [this] { showView (view, -1); };
     content.addChildComponent (backToObjectButton);
 
     // ---- Shared: filter & modulation ----
@@ -694,13 +844,13 @@ int ImpossibleSynthEditor::currentLayerType() const
     return juce::roundToInt (rawValue (ImpossibleSynthProcessor::layerId (boundLayer, "type")));
 }
 
-void ImpossibleSynthEditor::showView (int newView, bool showWavetable)
+void ImpossibleSynthEditor::showView (int newView, int sourcePage)
 {
     view = newView;
     if (view >= 0 && view != boundLayer)
         bindToLayer (view);
     shownType = currentLayerType();
-    wavetableOverride = view >= 0 && shownType == kLayerPhysical && showWavetable;
+    sourceOverride = (view >= 0 && shownType == kLayerPhysical) ? sourcePage : -1;
     layoutContent();
     timerCallback();
     content.repaint();
@@ -721,9 +871,10 @@ void ImpossibleSynthEditor::layoutContent()
     linksArea = {};
 
     const bool mixView = view < 0;
-    const bool wavetablePage = ! mixView && (shownType == kLayerWavetable || wavetableOverride);
+    const int page = mixView ? -1 : (sourceOverride >= 0 ? sourceOverride : shownType);
 
-    for (auto* list : { &physicalComponents, &wavetableComponents, &sharedComponents, &mixComponents })
+    for (auto* list : { &physicalComponents, &wavetableComponents, &cellsComponents, &swarmComponents,
+                        &sharedComponents, &mixComponents })
         for (auto* c : *list)
             c->setVisible (false);
     auto show = [] (std::vector<juce::Component*>& list) { for (auto* c : list) c->setVisible (true); };
@@ -731,11 +882,14 @@ void ImpossibleSynthEditor::layoutContent()
         show (mixComponents);
     else
     {
-        show (wavetablePage ? wavetableComponents : physicalComponents);
+        show (page == kLayerWavetable ? wavetableComponents
+              : page == kLayerCells   ? cellsComponents
+              : page == kLayerSwarm   ? swarmComponents
+                                      : physicalComponents);
         show (sharedComponents);
     }
-    editWavetableButton.setVisible (false); // the timer shows it when relevant
-    backToObjectButton.setVisible (wavetablePage && wavetableOverride);
+    editSourceButton.setVisible (false); // the timer shows it when relevant
+    backToObjectButton.setVisible (sourceOverride >= 0);
     engineLabel.setVisible (! mixView);
     engineType->box.setVisible (! mixView);
 
@@ -812,8 +966,12 @@ void ImpossibleSynthEditor::layoutContent()
 
     if (mixView)
         layoutMixPage (area);
-    else if (wavetablePage)
+    else if (page == kLayerWavetable)
         layoutWavetablePage (area);
+    else if (page == kLayerCells)
+        layoutCellsPage (area);
+    else if (page == kLayerSwarm)
+        layoutSwarmPage (area);
     else
         layoutPhysicalPage (area);
 }
@@ -879,7 +1037,7 @@ void ImpossibleSynthEditor::layoutPhysicalPage (juce::Rectangle<int> page)
         placeKnob (oscWave, c[3]);
         placeChoice (unison, c[4]);
         placeKnob (detune, c[5]);
-        editWavetableButton.setBounds (excite.bounds.getRight() - 160, excite.bounds.getY() + 8, 150, 26);
+        editSourceButton.setBounds (excite.bounds.getRight() - 160, excite.bounds.getY() + 8, 150, 26);
     }
     {
         auto c = cellsOf (innerOf (object.bounds), 6);
@@ -922,10 +1080,10 @@ void ImpossibleSynthEditor::layoutWavetablePage (juce::Rectangle<int> page)
     page.removeFromTop (gap);
     auto rowC = page;
 
-    Section wt { wavetableOverride ? "WAVETABLE  (exciter)" : "WAVETABLE", Colours::wavetable, rowA.removeFromLeft (800) };
+    Section wt { sourceOverride >= 0 ? "WAVETABLE  (exciter)" : "WAVETABLE", Colours::wavetable, rowA.removeFromLeft (800) };
     rowA.removeFromLeft (gap);
     Section osc { "UNISON & SUB", Colours::wavetable, rowA };
-    Section amp { wavetableOverride ? "ENVELOPE" : "AMP", Colours::object, rowB.removeFromLeft (590) };
+    Section amp { sourceOverride >= 0 ? "ENVELOPE" : "AMP", Colours::object, rowB.removeFromLeft (590) };
     rowB.removeFromLeft (gap);
     sections.push_back (wt);
     sections.push_back (osc);
@@ -964,6 +1122,128 @@ void ImpossibleSynthEditor::layoutWavetablePage (juce::Rectangle<int> page)
     }
 
     layoutSharedSections (rowB, rowC);
+}
+
+void ImpossibleSynthEditor::layoutSourceRowB (juce::Rectangle<int> rowB, juce::Rectangle<int> rowC)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    Section amp { sourceOverride >= 0 ? "ENVELOPE" : "AMP", Colours::object, rowB.removeFromLeft (590) };
+    rowB.removeFromLeft (12);
+    sections.push_back (amp);
+
+    auto c = cellsOf (innerOf (amp.bounds), 5);
+    placeKnob (attack, c[0]);
+    placeKnob (ampDecay, c[1]);
+    placeKnob (ampSustain, c[2]);
+    placeKnob (release, c[3]);
+    octave->label.setBounds (c[4].removeFromTop (20));
+    octave->box.setBounds (c[4].withSizeKeepingCentre (juce::jmin (c[4].getWidth() - 8, 110), 30).translated (0, -10));
+
+    layoutSharedSections (rowB, rowC);
+}
+
+void ImpossibleSynthEditor::layoutCellsPage (juce::Rectangle<int> page)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    auto placeChoice = [] (Choice* c, juce::Rectangle<int> cell)
+    {
+        c->label.setBounds (cell.removeFromTop (20));
+        c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 136), 28).withY (cell.getY()));
+    };
+
+    const int gap = 12;
+    auto rowA = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowB = page.removeFromTop (196);
+    page.removeFromTop (gap);
+
+    Section cells { sourceOverride >= 0 ? "CELLS  (exciter)" : "CELLS", Colours::wavetable, rowA.removeFromLeft (800) };
+    rowA.removeFromLeft (gap);
+    Section tone { "TONE", Colours::wavetable, rowA };
+    sections.push_back (cells);
+    sections.push_back (tone);
+
+    {
+        auto r = innerOf (cells.bounds);
+        cellsDisplay.setBounds (r.removeFromLeft (330));
+        r.removeFromLeft (14);
+        auto combos = cellsOf (r.removeFromTop (52), 3);
+        placeChoice (cellRule, combos[0]);
+        placeChoice (cellSeed, combos[1]);
+        placeChoice (cellSync, combos[2]);
+        r.removeFromTop (4);
+        auto knobsRow = cellsOf (r.withTrimmedLeft (r.getWidth() / 6).withTrimmedRight (r.getWidth() / 6), 2);
+        placeKnob (cellDensity, knobsRow[0]);
+        placeKnob (cellSpeed, knobsRow[1]);
+        backToObjectButton.setBounds (cells.bounds.getRight() - 170, cells.bounds.getY() + 8, 160, 26);
+    }
+    {
+        auto c = cellsOf (innerOf (tone.bounds), 4);
+        placeKnob (cellGlide, c[0]);
+        placeKnob (cellTilt, c[1]);
+        placeKnob (cellMutate, c[2]);
+        placeKnob (wtSub, c[3]);
+    }
+
+    layoutSourceRowB (rowB, page);
+}
+
+void ImpossibleSynthEditor::layoutSwarmPage (juce::Rectangle<int> page)
+{
+    auto placeKnob = [] (Knob* k, juce::Rectangle<int> cell)
+    {
+        k->label.setBounds (cell.removeFromTop (20));
+        k->slider.setBounds (cell.reduced (2, 0));
+    };
+    auto placeChoice = [] (Choice* c, juce::Rectangle<int> cell)
+    {
+        c->label.setBounds (cell.removeFromTop (20));
+        c->box.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 136), 28).withY (cell.getY()));
+    };
+
+    const int gap = 12;
+    auto rowA = page.removeFromTop (196);
+    page.removeFromTop (gap);
+    auto rowB = page.removeFromTop (196);
+    page.removeFromTop (gap);
+
+    Section swarm { sourceOverride >= 0 ? "SWARM  (exciter)" : "SWARM", Colours::wavetable, rowA.removeFromLeft (800) };
+    rowA.removeFromLeft (gap);
+    Section motion { "MOTION", Colours::wavetable, rowA };
+    sections.push_back (swarm);
+    sections.push_back (motion);
+
+    {
+        auto r = innerOf (swarm.bounds);
+        swarmDisplay.setBounds (r.removeFromLeft (330));
+        r.removeFromLeft (14);
+        auto combos = cellsOf (r.removeFromTop (52).withTrimmedRight (r.getWidth() / 3), 2);
+        placeChoice (swarmCount, combos[0]);
+        placeChoice (swarmHome, combos[1]);
+        r.removeFromTop (4);
+        auto knobsRow = cellsOf (r, 3);
+        placeKnob (swarmPull, knobsRow[0]);
+        placeKnob (swarmChaos, knobsRow[1]);
+        placeKnob (swarmFlock, knobsRow[2]);
+        backToObjectButton.setBounds (swarm.bounds.getRight() - 170, swarm.bounds.getY() + 8, 160, 26);
+    }
+    {
+        auto c = cellsOf (innerOf (motion.bounds), 4);
+        placeKnob (swarmSpread, c[0]);
+        placeKnob (swarmSpeed, c[1]);
+        placeKnob (swarmWave, c[2]);
+        placeKnob (wtSub, c[3]);
+    }
+
+    layoutSourceRowB (rowB, page);
 }
 
 void ImpossibleSynthEditor::layoutSharedSections (juce::Rectangle<int> filterArea, juce::Rectangle<int> modArea)
@@ -1102,7 +1382,7 @@ void ImpossibleSynthEditor::paintContent (juce::Graphics& g)
     g.drawText ("IMPOSSIBLE SYNTH", header.removeFromLeft (300), juce::Justification::centredLeft);
     g.setColour (Colours::dim);
     g.setFont (uiFont (13.0f));
-    g.drawText ("v0.3", header.removeFromLeft (40), juce::Justification::centredLeft);
+    g.drawText ("v0.4", header.removeFromLeft (40), juce::Justification::centredLeft);
 
     for (auto& s : sections)
     {
@@ -1192,7 +1472,7 @@ void ImpossibleSynthEditor::timerCallback()
         const bool continuous = ex == kBow || ex == kBreath || ex == kOsc || ex == kExcWavetable;
         const bool filterOn = juce::roundToInt (rawValue (id ("filterMode"))) != kFilterOff;
 
-        attack->slider.setEnabled (! physical || wavetableOverride || continuous);
+        attack->slider.setEnabled (! physical || sourceOverride >= 0 || continuous);
         oscWave->slider.setEnabled (ex == kOsc);
         unison->box.setEnabled (ex == kOsc);
         detune->slider.setEnabled (ex == kOsc);
@@ -1204,11 +1484,18 @@ void ImpossibleSynthEditor::timerCallback()
         lfoRate[0]->slider.setEnabled (juce::roundToInt (rawValue (id ("lfo1Sync"))) == 0);
         lfoRate[1]->slider.setEnabled (juce::roundToInt (rawValue (id ("lfo2Sync"))) == 0);
 
-        const bool onPhysicalPage = physical && ! wavetableOverride;
-        editWavetableButton.setVisible (onPhysicalPage && ex == kExcWavetable);
-        if (wavetableOverride && ex != kExcWavetable)
+        const int borrowed = ex == kExcWavetable ? kLayerWavetable : ex == kExcCells ? kLayerCells : ex == kExcSwarm ? kLayerSwarm : -1;
+        const bool onPhysicalPage = physical && sourceOverride < 0;
+        editSourceButton.setVisible (onPhysicalPage && borrowed >= 0);
+        if (borrowed >= 0)
         {
-            showView (view, false); // exciter changed away from Wavetable
+            const auto text = juce::String ("Edit ") + kLayerTypeNames[borrowed] + juce::String::fromUTF8 (" \xe2\x80\xba");
+            if (editSourceButton.getButtonText() != text)
+                editSourceButton.setButtonText (text);
+        }
+        if (sourceOverride >= 0 && borrowed != sourceOverride)
+        {
+            showView (view, -1); // the exciter changed away from that engine
             return;
         }
 

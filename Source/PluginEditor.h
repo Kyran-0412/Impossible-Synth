@@ -42,6 +42,48 @@ private:
     float lastPosition = -1.0f;
 };
 
+// Live view of the newest note's Game of Life grid.
+class CellsDisplay : public juce::Component,
+                     private juce::Timer
+{
+public:
+    CellsDisplay() { startTimerHz (30); }
+    ~CellsDisplay() override { stopTimer(); }
+
+    std::function<const impossible::LayerDisplay*()> getDisplay;
+    juce::Colour colour;
+
+    void paint (juce::Graphics& g) override;
+
+private:
+    void timerCallback() override
+    {
+        if (isShowing())
+            repaint();
+    }
+};
+
+// Live view of the newest note's particles (pitch across, stereo up/down).
+class SwarmDisplay : public juce::Component,
+                     private juce::Timer
+{
+public:
+    SwarmDisplay() { startTimerHz (30); }
+    ~SwarmDisplay() override { stopTimer(); }
+
+    std::function<const impossible::LayerDisplay*()> getDisplay;
+    juce::Colour colour;
+
+    void paint (juce::Graphics& g) override;
+
+private:
+    void timerCallback() override
+    {
+        if (isShowing())
+            repaint();
+    }
+};
+
 // One tab in the layer bar: click to select, click the dot to switch the layer on/off.
 class LayerTab : public juce::Component,
                  public juce::SettableTooltipClient
@@ -136,10 +178,13 @@ private:
                        int layer = kCurrentLayer);
     juce::String paramIdFor (const juce::String& baseId, int layer) const;
     void bindToLayer (int layer);
-    void showView (int view, bool wavetableOverride = false);
+    void showView (int view, int sourcePage = -1);
     void layoutContent();
     void layoutPhysicalPage (juce::Rectangle<int> page);
     void layoutWavetablePage (juce::Rectangle<int> page);
+    void layoutCellsPage (juce::Rectangle<int> page);
+    void layoutSwarmPage (juce::Rectangle<int> page);
+    void layoutSourceRowB (juce::Rectangle<int> rowB, juce::Rectangle<int> rowC);
     void layoutMixPage (juce::Rectangle<int> page);
     void layoutSharedSections (juce::Rectangle<int> filterArea, juce::Rectangle<int> modArea);
     void paintContent (juce::Graphics& g);
@@ -168,7 +213,7 @@ private:
     // View: -1 = Mix page, 0..3 = editing that layer.
     int view = 0;
     int boundLayer = -1;
-    bool wavetableOverride = false; // showing the Wavetable page of a Physical layer (its exciter)
+    int sourceOverride = -1; // showing the Wavetable/Cells/Swarm page of a Physical layer's exciter
     int shownType = -1;
 
     std::array<LayerTab, impossible::kNumLayers + 1> tabs;
@@ -182,10 +227,12 @@ private:
     std::unique_ptr<juce::AlertWindow> saveDialog;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    juce::TextButton editWavetableButton { juce::String::fromUTF8 ("Edit Wavetable \xe2\x80\xba") };
+    juce::TextButton editSourceButton;
     juce::TextButton backToObjectButton { juce::String::fromUTF8 ("\xe2\x80\xb9 Back to Object") };
     juce::TextButton importButton { "Import WAV" };
     WavetableDisplay wavetableDisplay;
+    CellsDisplay cellsDisplay;
+    SwarmDisplay swarmDisplay;
 
     juce::MidiKeyboardComponent keyboard;
     juce::TooltipWindow tooltips { this, 600 };
@@ -199,13 +246,17 @@ private:
     Choice *wtTable = nullptr, *wtWarpMode = nullptr, *wtUnison = nullptr;
     Knob *wtPos = nullptr, *wtWarp = nullptr, *wtDetune = nullptr, *wtSpread = nullptr, *wtSub = nullptr;
     Knob *ampDecay = nullptr, *ampSustain = nullptr;
+    Choice *cellRule = nullptr, *cellSeed = nullptr, *cellSync = nullptr, *swarmCount = nullptr, *swarmHome = nullptr;
+    Knob *cellDensity = nullptr, *cellSpeed = nullptr, *cellGlide = nullptr, *cellTilt = nullptr, *cellMutate = nullptr;
+    Knob *swarmPull = nullptr, *swarmChaos = nullptr, *swarmFlock = nullptr, *swarmSpread = nullptr, *swarmSpeed = nullptr, *swarmWave = nullptr;
     std::array<Choice*, impossible::kNumLfos> lfoShape {}, lfoSync {}, lfoRetrig {};
     std::array<Knob*, impossible::kNumLfos> lfoRate {};
     Knob *envA = nullptr, *envD = nullptr, *envS = nullptr, *envR = nullptr;
     std::array<Knob*, impossible::kNumMacros> macros {};
     Knob *space = nullptr, *room = nullptr, *output = nullptr;
 
-    std::vector<juce::Component*> physicalComponents, wavetableComponents, sharedComponents, mixComponents;
+    std::vector<juce::Component*> physicalComponents, wavetableComponents, cellsComponents, swarmComponents,
+        sharedComponents, mixComponents;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ImpossibleSynthEditor)
 };

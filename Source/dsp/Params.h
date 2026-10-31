@@ -4,8 +4,8 @@
 // presets and offline tests all share it. The plugin builds its parameter
 // list from the IDs, ranges and defaults defined here.
 //
-// A Patch has 4 layers. Each layer is either a Physical (modal) engine or a
-// Wavetable engine, with its own filter, drive and modulation. Plugin
+// A Patch has 4 layers. Each layer is a Physical (modal), Wavetable, Cells
+// (cellular automaton) or Swarm (particle) engine, with its own filter, drive and modulation. Plugin
 // parameter IDs for layer settings are prefixed: "L1_shape", "L2_wtPos", ...
 
 #include <array>
@@ -20,11 +20,18 @@ constexpr int kNumModSlots = 6;
 constexpr int kNumMacros = 4;
 constexpr int kMaxUnison = 7;
 
-enum LayerType { kLayerPhysical, kLayerWavetable, kNumLayerTypes };
-enum Exciter { kStrike, kPluck, kBow, kBreath, kOsc, kExcWavetable, kNumExciters };
+enum LayerType { kLayerPhysical, kLayerWavetable, kLayerCells, kLayerSwarm, kNumLayerTypes };
+enum Exciter { kStrike, kPluck, kBow, kBreath, kOsc, kExcWavetable, kExcCells, kExcSwarm, kNumExciters };
 enum FilterMode { kFilterOff, kFilterLP, kFilterBP, kFilterHP, kFilterNotch, kNumFilterModes };
 enum LfoShape { kLfoSine, kLfoTriangle, kLfoSawUp, kLfoSawDown, kLfoSquare, kLfoSampleHold, kLfoDrift, kNumLfoShapes };
 enum WarpMode { kWarpOff, kWarpBend, kWarpSync, kWarpMirror, kWarpSqueeze, kWarpFold, kWarpCrush, kWarpFM, kNumWarpModes };
+enum CellRule { kRuleLife, kRuleHighLife, kRuleSeeds, kRuleDayNight, kRuleMaze, kRuleAnneal, kNumCellRules };
+enum CellSeed { kSeedRandom, kSeedGliders, kSeedRPentomino, kSeedAcorn, kSeedSymmetric, kSeedSpaceships, kNumCellSeeds };
+enum SwarmHome { kHomeUnison, kHomeHarmonics, kHomeOctaves, kHomeFifths, kHomeChord, kHomeCluster, kNumSwarmHomes };
+
+constexpr int kCellRows = 16;    // grid height: rows set stereo position
+constexpr int kCellCols = 32;    // grid width: column x drives harmonic x + 1
+constexpr int kMaxParticles = 32;
 
 // New entries are only ever appended, so older presets keep their meaning.
 enum ModSource
@@ -41,15 +48,21 @@ enum ModTarget
     kDstBloom, kDstDrift, kDstTransmute, kDstFracture,
     kDstOscWave, kDstDetune, kDstBody, kDstCutoff, kDstResonance, kDstDrive,
     kDstWtPos, kDstWtWarp, kDstPan,
+    kDstCellSpeed, kDstCellTilt, kDstCellMutate,
+    kDstSwarmPull, kDstSwarmChaos, kDstSwarmFlock, kDstSwarmSpread,
     kNumTargets
 };
 
-inline const char* const kLayerTypeNames[kNumLayerTypes] = { "Physical", "Wavetable" };
+inline const char* const kLayerTypeNames[kNumLayerTypes] = { "Physical", "Wavetable", "Cells", "Swarm" };
 inline const char* const kOnOffNames[2] = { "Off", "On" };
-inline const char* const kExciterNames[kNumExciters] = { "Strike", "Pluck", "Bow", "Breath", "Osc", "Wavetable" };
+inline const char* const kExciterNames[kNumExciters] = { "Strike", "Pluck", "Bow", "Breath", "Osc", "Wavetable", "Cells", "Swarm" };
 inline const char* const kFilterModeNames[kNumFilterModes] = { "Off", "Low Pass", "Band Pass", "High Pass", "Notch" };
 inline const char* const kLfoShapeNames[kNumLfoShapes] = { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Drift" };
 inline const char* const kWarpNames[kNumWarpModes] = { "Off", "Bend", "Sync", "Mirror", "Squeeze", "Fold", "Crush", "FM" };
+inline const char* const kCellRuleNames[kNumCellRules] = { "Life", "HighLife", "Seeds", "Day & Night", "Maze", "Anneal" };
+inline const char* const kCellSeedNames[kNumCellSeeds] = { "Random", "Gliders", "R-Pentomino", "Acorn", "Symmetric", "Spaceships" };
+inline const char* const kSwarmHomeNames[kNumSwarmHomes] = { "Unison", "Harmonics", "Octaves", "Fifths", "Chord", "Cluster" };
+inline const char* const kParticleCountNames[4] = { "4", "8", "16", "32" };
 inline const char* const kSourceNames[kNumSources] = {
     "Off", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Random",
     "Macro 1", "Macro 2", "Macro 3", "Macro 4"
@@ -57,7 +70,9 @@ inline const char* const kSourceNames[kNumSources] = {
 inline const char* const kTargetNames[kNumTargets] = {
     "Off", "Pitch", "Volume", "Hardness", "Position", "Shape", "Material", "Size", "Decay",
     "Bloom", "Drift", "Transmute", "Fracture", "Osc Wave", "Detune", "Body", "Cutoff", "Resonance", "Drive",
-    "WT Position", "WT Warp", "Pan"
+    "WT Position", "WT Warp", "Pan",
+    "Cell Speed", "Cell Tilt", "Cell Mutate",
+    "Swarm Pull", "Swarm Chaos", "Swarm Flock", "Swarm Spread"
 };
 inline const char* const kOctaveNames[5] = { "-2", "-1", "0", "+1", "+2" };
 inline const char* const kUnisonNames[kMaxUnison] = { "1", "2", "3", "4", "5", "6", "7" };
@@ -138,6 +153,17 @@ inline constexpr Range pan { -1.0f, 1.0f };
 inline constexpr Range fine { -100.0f, 100.0f };
 inline constexpr Range velocity { 0.0f, 1.0f };
 inline constexpr Range macro { 0.0f, 1.0f };
+inline constexpr Range cellDensity { 0.0f, 1.0f };
+inline constexpr Range cellSpeed { 0.25f, 60.0f, 6.0f };
+inline constexpr Range cellGlide { 0.0f, 1.0f };
+inline constexpr Range cellTilt { 0.0f, 2.0f };
+inline constexpr Range cellMutate { 0.0f, 1.0f };
+inline constexpr Range swarmPull { 0.0f, 1.0f };
+inline constexpr Range swarmChaos { 0.0f, 1.0f };
+inline constexpr Range swarmFlock { -1.0f, 1.0f };
+inline constexpr Range swarmSpread { 0.0f, 1.0f };
+inline constexpr Range swarmSpeed { 0.05f, 10.0f, 1.0f };
+inline constexpr Range swarmWave { 0.0f, 1.0f };
 inline constexpr Range space { 0.0f, 1.0f };
 inline constexpr Range room { 0.0f, 1.0f };
 inline constexpr Range output { -36.0f, 6.0f };
@@ -214,6 +240,26 @@ struct LayerParams
     float ampDecay = 1.0f;
     float ampSustain = 1.0f;
 
+    // Cells (cellular automaton)
+    int cellRule = kRuleLife;
+    int cellSeed = kSeedRandom;
+    float cellDensity = 0.35f;
+    float cellSpeed = 6.0f;   // generations per second (when Sync is Free)
+    int cellSync = 0;
+    float cellGlide = 0.6f;   // crossfade between generations (0 = hard steps)
+    float cellTilt = 0.6f;    // higher = darker (upper harmonics quieter)
+    float cellMutate = 0.05f; // random cells flipped each generation
+
+    // Swarm (particles)
+    int swarmCount = 2;       // index: 4, 8, 16, 32
+    int swarmHome = kHomeHarmonics;
+    float swarmPull = 0.6f;
+    float swarmChaos = 0.3f;
+    float swarmFlock = 0.0f;
+    float swarmSpread = 0.5f;  // 0.5 = exact home notes; lower squeezes them, higher stretches
+    float swarmSpeed = 1.0f;
+    float swarmWave = 0.0f;   // Sine → Triangle → Saw
+
     // Convenience: set one modulation slot.
     void mod (int slot, int source, int target, float amount)
     {
@@ -234,10 +280,10 @@ struct Patch
 
     Patch()
     {
-        // Layer 1 starts on; the others start off with alternating engines,
-        // so switching one on gives you the other engine type.
+        // Layer 1 starts on; the others start off, one of each engine type,
+        // so switching one on gives you a different engine.
         for (int i = 0; i < kNumLayers; ++i)
-            layers[(size_t) i].type = (i % 2 == 0) ? kLayerPhysical : kLayerWavetable;
+            layers[(size_t) i].type = i;
         layers[0].enabled = 1;
     }
 };
@@ -322,6 +368,24 @@ void visitLayer (L& p, F&& f)
     f ("wtSub", p.wtSub);
     f ("ampDecay", p.ampDecay);
     f ("ampSustain", p.ampSustain);
+
+    f ("cellRule", p.cellRule);
+    f ("cellSeed", p.cellSeed);
+    f ("cellDensity", p.cellDensity);
+    f ("cellSpeed", p.cellSpeed);
+    f ("cellSync", p.cellSync);
+    f ("cellGlide", p.cellGlide);
+    f ("cellTilt", p.cellTilt);
+    f ("cellMutate", p.cellMutate);
+
+    f ("swarmCount", p.swarmCount);
+    f ("swarmHome", p.swarmHome);
+    f ("swarmPull", p.swarmPull);
+    f ("swarmChaos", p.swarmChaos);
+    f ("swarmFlock", p.swarmFlock);
+    f ("swarmSpread", p.swarmSpread);
+    f ("swarmSpeed", p.swarmSpeed);
+    f ("swarmWave", p.swarmWave);
 }
 
 // Calls f(layer, id, field) for every setting in the patch. layer is 0..3 for

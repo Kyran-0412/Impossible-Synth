@@ -407,6 +407,155 @@ inline std::vector<Preset> factoryPresets()
         p.cutoff = 6000.0f; P.space = 0.2f;
     });
 
+    // ---- Cells (Game of Life) --------------------------------------------
+    auto cellsLayer = [] (Patch& P) -> LayerParams&
+    {
+        auto& c = P.layers[0];
+        c.type = kLayerCells;
+        return c;
+    };
+
+    add ("Glider Organ", [&] (Patch& P)
+    {
+        auto& c = cellsLayer (P);
+        c.cellRule = kRuleLife; c.cellSeed = kSeedGliders; c.cellDensity = 0.6f;
+        c.cellSpeed = 8.0f; c.cellGlide = 0.7f; c.cellTilt = 0.5f; c.cellMutate = 0.02f;
+        c.attack = 0.05f; c.release = 0.6f; P.space = 0.35f;
+    });
+
+    add ("Primordial Soup", [&] (Patch& P)
+    {
+        auto& c = cellsLayer (P);
+        c.cellRule = kRuleLife; c.cellSeed = kSeedRandom; c.cellDensity = 0.4f;
+        c.cellSpeed = 12.0f; c.cellGlide = 0.3f; c.cellTilt = 0.7f; c.cellMutate = 0.15f;
+        c.attack = 0.4f; c.release = 2.0f; c.cutoff = 6000.0f;
+        c.lfoShape[0] = kLfoDrift; c.lfoRate[0] = 0.2f; c.mod (0, kSrcLfo1, kDstCellTilt, 0.3f);
+        P.space = 0.5f;
+    });
+
+    add ("Seeds Glitch", [&] (Patch& P)
+    {
+        auto& c = cellsLayer (P);
+        c.cellRule = kRuleSeeds; c.cellSeed = kSeedRandom; c.cellDensity = 0.15f;
+        c.cellSync = 7; c.cellGlide = 0.0f; c.cellTilt = 0.4f;
+        c.attack = 0.002f; c.ampDecay = 0.6f; c.ampSustain = 0.3f; c.release = 0.2f; c.drive = 0.3f;
+        P.space = 0.2f;
+    });
+
+    add ("Day & Night Pad", [&] (Patch& P)
+    {
+        auto& c = cellsLayer (P);
+        c.cellRule = kRuleDayNight; c.cellSeed = kSeedSymmetric; c.cellDensity = 0.5f;
+        c.cellSpeed = 2.0f; c.cellGlide = 1.0f; c.cellTilt = 0.9f; c.cellMutate = 0.05f;
+        c.attack = 1.2f; c.release = 3.0f; c.cutoff = 5000.0f;
+        P.space = 0.6f; P.room = 0.85f;
+    });
+
+    add ("Maze Bass", [&] (Patch& P)
+    {
+        auto& c = cellsLayer (P);
+        c.cellRule = kRuleMaze; c.cellSeed = kSeedAcorn; c.octave = 1;
+        c.cellSpeed = 4.0f; c.cellGlide = 0.8f; c.cellTilt = 1.2f; c.wtSub = 0.5f;
+        c.attack = 0.003f; c.release = 0.2f;
+        c.cutoff = 900.0f; c.filterEnv = 0.4f; c.envDecay = 0.3f; c.drive = 0.4f;
+        P.space = 0.05f;
+    });
+
+    // ---- Swarm (particles) ----------------------------------------------
+    auto swarmLayer = [] (Patch& P) -> LayerParams&
+    {
+        auto& w = P.layers[0];
+        w.type = kLayerSwarm;
+        return w;
+    };
+
+    add ("Starling Cloud", [&] (Patch& P)
+    {
+        auto& w = swarmLayer (P);
+        w.swarmCount = 3; w.swarmHome = kHomeHarmonics; w.swarmPull = 0.3f; w.swarmChaos = 0.5f; w.swarmFlock = 0.4f;
+        w.attack = 0.8f; w.release = 2.5f; P.space = 0.6f; P.room = 0.85f;
+    });
+
+    add ("Harmonic Gravity", [&] (Patch& P)
+    {
+        // Starts as a chaotic cloud, then gravity pulls it into a clean tone.
+        auto& w = swarmLayer (P);
+        w.swarmCount = 3; w.swarmHome = kHomeHarmonics; w.swarmPull = 0.95f; w.swarmChaos = 0.15f; w.swarmSpeed = 0.6f;
+        w.envAttack = 0.001f; w.envDecay = 2.5f; w.envSustain = 0.0f;
+        w.mod (0, kSrcEnv, kDstSwarmPull, -0.8f);
+        w.mod (1, kSrcEnv, kDstSwarmChaos, 0.6f);
+        w.attack = 0.3f; w.release = 1.5f; P.space = 0.4f;
+    });
+
+    add ("Firefly Swarm", [&] (Patch& P)
+    {
+        auto& w = swarmLayer (P);
+        w.swarmCount = 2; w.swarmHome = kHomeOctaves; w.swarmPull = 0.2f; w.swarmChaos = 0.8f; w.swarmSpeed = 2.5f;
+        w.octave = 3; w.attack = 0.01f; w.ampDecay = 0.8f; w.ampSustain = 0.4f; w.release = 1.2f;
+        P.space = 0.7f; P.room = 0.9f;
+    });
+
+    add ("Dissolving Choir", [&] (Patch& P)
+    {
+        // Macro 1 lets go of the chord and the voices drift apart.
+        auto& w = swarmLayer (P);
+        w.swarmCount = 2; w.swarmHome = kHomeChord; w.swarmPull = 0.8f; w.swarmChaos = 0.2f; w.swarmWave = 0.4f;
+        w.attack = 0.6f; w.release = 2.5f; w.cutoff = 5000.0f;
+        w.mod (0, kSrcMacro1, kDstSwarmPull, -0.8f);
+        w.mod (1, kSrcMacro1, kDstSwarmChaos, 0.6f);
+        w.lfoShape[0] = kLfoDrift; w.lfoRate[0] = 0.3f; w.mod (2, kSrcLfo1, kDstSwarmFlock, 0.4f);
+        P.space = 0.55f;
+    });
+
+    add ("Fifth Storm", [&] (Patch& P)
+    {
+        auto& w = swarmLayer (P);
+        w.swarmCount = 2; w.swarmHome = kHomeFifths; w.swarmPull = 0.5f; w.swarmChaos = 0.6f; w.swarmFlock = -0.5f;
+        w.swarmWave = 1.0f; w.cutoff = 3000.0f; w.resonance = 0.3f; w.drive = 0.2f;
+        w.attack = 0.2f; w.release = 1.0f; P.space = 0.4f;
+    });
+
+    // ---- New engines linked to the others ---------------------------------
+    add ("Life Through a Bell", [] (Patch& P)
+    {
+        auto& p = P.layers[0];
+        p.exciter = kExcCells; p.cellRule = kRuleLife; p.cellSeed = kSeedGliders; p.cellDensity = 0.5f;
+        p.cellSpeed = 6.0f; p.cellGlide = 0.6f;
+        p.shape = 0.9f; p.material = 0.6f; p.body = 0.8f; p.attack = 0.2f; p.release = 2.0f; p.volume = 6.0f;
+        P.space = 0.5f;
+    });
+
+    add ("Swarm in a Tube", [] (Patch& P)
+    {
+        auto& p = P.layers[0];
+        p.exciter = kExcSwarm; p.swarmHome = kHomeHarmonics; p.swarmPull = 0.5f; p.swarmChaos = 0.4f;
+        p.shape = 0.25f; p.material = 0.85f; p.body = 0.7f; p.attack = 0.3f; p.release = 1.5f;
+        P.space = 0.45f;
+    });
+
+    add ("Ecosystem", [] (Patch& P)
+    {
+        // Macro 1: more life in the cells, and the swarm lets go.
+        auto& cells = P.layers[0];
+        cells.type = kLayerCells; cells.cellRule = kRuleDayNight; cells.cellSeed = kSeedSymmetric;
+        cells.cellSpeed = 3.0f; cells.cellGlide = 0.9f; cells.cellTilt = 0.9f;
+        cells.attack = 1.0f; cells.release = 3.0f; cells.volume = -3.0f;
+        cells.mod (0, kSrcMacro1, kDstCellMutate, 0.6f);
+
+        auto& swarm = P.layers[1];
+        swarm.enabled = 1; swarm.type = kLayerSwarm; swarm.swarmHome = kHomeHarmonics; swarm.swarmCount = 2;
+        swarm.swarmPull = 0.8f; swarm.swarmChaos = 0.3f; swarm.octave = 3; swarm.volume = -8.0f;
+        swarm.attack = 1.5f; swarm.release = 3.0f;
+        swarm.mod (0, kSrcMacro1, kDstSwarmPull, -0.7f);
+
+        auto& drops = P.layers[2];
+        drops.enabled = 1; drops.type = kLayerPhysical; drops.exciter = kPluck; drops.shape = 0.75f;
+        drops.material = 1.0f; drops.hardness = 0.8f; drops.decay = 0.6f; drops.octave = 3; drops.volume = -10.0f;
+        drops.lfoShape[0] = kLfoSampleHold; drops.lfoSync[0] = 7; drops.mod (0, kSrcLfo1, kDstPosition, 0.4f);
+
+        P.space = 0.6f; P.room = 0.9f;
+    });
+
     return list;
 }
 
@@ -517,8 +666,17 @@ inline void randomCommon (LayerParams& p, Rng& r, bool allowWtTargets)
     for (int s = 0; s < numMods; ++s)
     {
         const int src = sources[(int) (u() * 6.0f) % 6];
-        const int dst = allowWtTargets ? wavetableTargets[(int) (u() * 7.0f) % 7]
-                                       : physicalTargets[(int) (u() * 9.0f) % 9];
+        static const int cellTargets[] = { kDstCellTilt, kDstCellSpeed, kDstCellMutate, kDstCutoff, kDstPan, kDstPitch, kDstVolume };
+        static const int swarmTargets[] = { kDstSwarmPull, kDstSwarmChaos, kDstSwarmFlock, kDstSwarmSpread, kDstCutoff, kDstPan, kDstVolume };
+        int dst;
+        if (! allowWtTargets)
+            dst = physicalTargets[(int) (u() * 9.0f) % 9];
+        else if (p.type == kLayerCells)
+            dst = cellTargets[(int) (u() * 7.0f) % 7];
+        else if (p.type == kLayerSwarm)
+            dst = swarmTargets[(int) (u() * 7.0f) % 7];
+        else
+            dst = wavetableTargets[(int) (u() * 7.0f) % 7];
         float amount = (0.1f + 0.4f * u()) * (chance (0.5f) ? 1.0f : -1.0f);
         if (dst == kDstPitch)
             amount *= 0.05f;
@@ -533,8 +691,47 @@ inline void randomCommon (LayerParams& p, Rng& r, bool allowWtTargets)
 }
 } // namespace detail
 
+namespace detail
+{
+inline void randomCells (LayerParams& p, Rng& r)
+{
+    auto u = [&r] { return r.uniform(); };
+    auto logRange = [&r] (float lo, float hi) { return lo * std::pow (hi / lo, r.uniform()); };
+    p.type = kLayerCells;
+    p.cellRule = (int) (u() * kNumCellRules) % kNumCellRules;
+    p.cellSeed = (int) (u() * kNumCellSeeds) % kNumCellSeeds;
+    p.cellDensity = 0.2f + 0.5f * u();
+    p.cellSpeed = logRange (1.0f, 20.0f);
+    p.cellSync = u() < 0.25f ? 5 + (int) (u() * 3.0f) % 3 : 0;
+    p.cellGlide = u();
+    p.cellTilt = 0.3f + 1.0f * u();
+    p.cellMutate = 0.15f * u();
+    p.attack = logRange (0.005f, 1.5f);
+    p.ampSustain = 0.5f + 0.5f * u();
+    p.release = logRange (0.1f, 3.0f);
+}
+
+inline void randomSwarm (LayerParams& p, Rng& r)
+{
+    auto u = [&r] { return r.uniform(); };
+    auto logRange = [&r] (float lo, float hi) { return lo * std::pow (hi / lo, r.uniform()); };
+    p.type = kLayerSwarm;
+    p.swarmCount = 1 + (int) (u() * 3.0f) % 3;
+    p.swarmHome = (int) (u() * kNumSwarmHomes) % kNumSwarmHomes;
+    p.swarmPull = u();
+    p.swarmChaos = 0.7f * u();
+    p.swarmFlock = r.bipolar() * 0.6f;
+    p.swarmSpread = 0.3f + 0.4f * u();
+    p.swarmSpeed = logRange (0.3f, 3.0f);
+    p.swarmWave = 0.6f * u();
+    p.attack = logRange (0.005f, 1.5f);
+    p.ampSustain = 0.5f + 0.5f * u();
+    p.release = logRange (0.1f, 3.0f);
+}
+} // namespace detail
+
 // A random but usually musical patch, for the Randomize button: one main
-// layer, often with a second (and sometimes third) layer of the other kind.
+// layer, often with a second (and sometimes third) layer of another kind.
 inline Patch randomPatch (Rng& r)
 {
     Patch patch;
@@ -548,12 +745,17 @@ inline Patch randomPatch (Rng& r)
         auto& p = patch.layers[(size_t) i];
         p = LayerParams();
         p.enabled = 1;
-        const bool physical = (i % 2 == 0) == mainIsPhysical;
-        if (physical)
-            detail::randomPhysical (p, r);
-        else
-            detail::randomWavetable (p, r);
-        detail::randomCommon (p, r, ! physical);
+        // Main layer: Physical or another engine; extra layers use a different engine.
+        int type = (i == 0) ? (mainIsPhysical ? kLayerPhysical : 1 + (int) (r.uniform() * 3.0f) % 3)
+                            : (patch.layers[0].type + 1 + (int) (r.uniform() * 3.0f) % 3) % kNumLayerTypes;
+        switch (type)
+        {
+            case kLayerPhysical:  detail::randomPhysical (p, r); break;
+            case kLayerWavetable: detail::randomWavetable (p, r); break;
+            case kLayerCells:     detail::randomCells (p, r); break;
+            default:              detail::randomSwarm (p, r); break;
+        }
+        detail::randomCommon (p, r, type != kLayerPhysical);
         if (i > 0)
             p.volume = -3.0f - 6.0f * r.uniform();
     }

@@ -168,6 +168,28 @@ const std::map<juce::String, Spec>& specs()
         s["ampDecay"] = { "Amp Decay", ranges::ampDecay, seconds, {} };
         s["ampSustain"] = { "Amp Sustain", ranges::ampSustain, percent, {} };
 
+        s["cellRule"] = { "Cell Rule", {}, {}, toStringArray (kCellRuleNames, kNumCellRules) };
+        s["cellSeed"] = { "Cell Seed", {}, {}, toStringArray (kCellSeedNames, kNumCellSeeds) };
+        s["cellDensity"] = { "Cell Density", ranges::cellDensity, percent, {} };
+        s["cellSpeed"] = { "Cell Speed", ranges::cellSpeed, [] (float v, int) { return String (v, v < 10.0f ? 1 : 0) + " gen/s"; }, {} };
+        s["cellSync"] = { "Cell Sync", {}, {}, toStringArray (kSyncNames, kNumSyncOptions) };
+        s["cellGlide"] = { "Cell Glide", ranges::cellGlide, percent, {} };
+        s["cellTilt"] = { "Cell Tilt", ranges::cellTilt, [] (float v, int) { return String (v, 2); }, {} };
+        s["cellMutate"] = { "Cell Mutate", ranges::cellMutate, percent, {} };
+
+        s["swarmCount"] = { "Particles", {}, {}, toStringArray (kParticleCountNames, 4) };
+        s["swarmHome"] = { "Swarm Home", {}, {}, toStringArray (kSwarmHomeNames, kNumSwarmHomes) };
+        s["swarmPull"] = { "Swarm Pull", ranges::swarmPull, percent, {} };
+        s["swarmChaos"] = { "Swarm Chaos", ranges::swarmChaos, percent, {} };
+        s["swarmFlock"] = { "Swarm Flock", ranges::swarmFlock, bipolar, {} };
+        s["swarmSpread"] = { "Swarm Spread", ranges::swarmSpread, [] (float v, int) { return String (v * 2.0f, 2) + "x"; }, {} };
+        s["swarmSpeed"] = { "Swarm Speed", ranges::swarmSpeed, [] (float v, int) { return String (v, 2) + "x"; }, {} };
+        s["swarmWave"] = { "Swarm Wave", ranges::swarmWave, [] (float v, int)
+                           {
+                               static const char* const waves[] = { "Sine", "Triangle", "Saw" };
+                               return morphText (v, waves, 3);
+                           }, {} };
+
         for (int i = 1; i <= kNumMacros; ++i)
             s["macro" + String (i)] = { "Macro " + String (i), ranges::macro, percent, {} };
 

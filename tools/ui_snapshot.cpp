@@ -17,6 +17,20 @@ int main (int argc, char** argv)
     if (argc > 2)
         processor.setCurrentProgram (juce::String (argv[2]).getIntValue());
 
+    // Play a chord for a moment so the live displays (cells, swarm) have something to show.
+    processor.prepareToPlay (48000.0, 512);
+    {
+        juce::AudioBuffer<float> buffer (2, 512);
+        for (int block = 0; block < 140; ++block)
+        {
+            juce::MidiBuffer midi;
+            if (block == 0)
+                for (int note : { 48, 60, 64, 67 })
+                    midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+            processor.processBlock (buffer, midi);
+        }
+    }
+
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     editor->setSize (ImpossibleSynthEditor::kBaseWidth, ImpossibleSynthEditor::kBaseHeight);
 

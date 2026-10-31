@@ -19,6 +19,8 @@ namespace
     constexpr float kNoiseGain = 1.0f;
     constexpr float kDryGain = 0.35f;
     constexpr float kWavetableGain = 0.3f;
+    constexpr float kCellsGain = 0.55f;
+    constexpr float kSwarmGain = 0.35f;
     constexpr float kAgcLevel = 0.3f;  // object level relative to its input, for sustained exciters
     constexpr float kAgcMaxGain = 16.0f;
 
@@ -39,7 +41,84 @@ namespace
 
     bool isContinuous (int exciter)
     {
-        return exciter == kBow || exciter == kBreath || exciter == kOsc || exciter == kExcWavetable;
+        return exciter == kBow || exciter == kBreath || exciter == kOsc || exciter == kExcWavetable
+               || exciter == kExcCells || exciter == kExcSwarm;
+    }
+
+    // The sound source a Physical exciter borrows from another engine (or -1).
+    int borrowedSource (int exciter)
+    {
+        switch (exciter)
+        {
+            case kExcWavetable: return kLayerWavetable;
+            case kExcCells:     return kLayerCells;
+            case kExcSwarm:     return kLayerSwarm;
+            default:            return -1;
+        }
+    }
+
+    // One cycle of a sine, for cheap lookups.
+    constexpr int kSineSize = 2048;
+    const std::array<float, kSineSize + 1>& sineTable()
+    {
+        static const auto table = []
+        {
+            std::array<float, kSineSize + 1> t {};
+            for (int i = 0; i <= kSineSize; ++i)
+                t[(size_t) i] = (float) std::sin (2.0 * 3.14159265358979323846 * i / kSineSize);
+            return t;
+        }();
+        return table;
+    }
+
+    float fastSin (float phase) // phase in [0, 1)
+    {
+        const auto& t = sineTable();
+        const float pos = phase * (float) kSineSize;
+        const int i = std::min ((int) pos, kSineSize - 1);
+        const float f = pos - (float) i;
+        return t[(size_t) i] + (t[(size_t) i + 1] - t[(size_t) i]) * f;
+    }
+
+    // Birth / survival rules as bit masks over the neighbour count (0..8).
+    struct CellRuleMasks { uint32_t birth, survive; };
+    CellRuleMasks ruleMasks (int rule)
+    {
+        auto bits = [] (std::initializer_list<int> counts)
+        {
+            uint32_t m = 0;
+            for (int c : counts)
+                m |= 1u << c;
+            return m;
+        };
+        switch (rule)
+        {
+            case kRuleHighLife: return { bits ({ 3, 6 }), bits ({ 2, 3 }) };
+            case kRuleSeeds:    return { bits ({ 2 }), 0u };
+            case kRuleDayNight: return { bits ({ 3, 6, 7, 8 }), bits ({ 3, 4, 6, 7, 8 }) };
+            case kRuleMaze:     return { bits ({ 3 }), bits ({ 1, 2, 3, 4, 5 }) };
+            case kRuleAnneal:   return { bits ({ 4, 6, 7, 8 }), bits ({ 3, 5, 6, 7, 8 }) };
+            default:            return { bits ({ 3 }), bits ({ 2, 3 }) }; // Life
+        }
+    }
+
+    // Home pitch (octaves above the note) of particle i of n.
+    float swarmHomeX (int home, int i, int n)
+    {
+        switch (home)
+        {
+            case kHomeUnison:    return 0.0f;
+            case kHomeHarmonics: return std::log2 ((float) (i + 1));
+            case kHomeOctaves:   return (float) (i % 4);
+            case kHomeFifths:    return std::fmod ((float) i * 7.0f / 12.0f, 3.0f);
+            case kHomeChord:
+            {
+                static const int tones[5] = { 0, 4, 7, 11, 14 };
+                return (float) (tones[i % 5] + 12 * (i / 5)) / 12.0f;
+            }
+            default: // Cluster: semitone steps around the note
+                return ((float) i - (float) (n - 1) * 0.5f) / 12.0f;
+        }
     }
 
     float hashBipolar (uint32_t x)
@@ -220,6 +299,11 @@ void Voice::start (int newNote, float vel, const LayerParams& p, const ModContex
     zi.fill (0.0f);
     gain.fill (1.0f - 0.9f * p.bloom);
 
+    cellRng.seed (seed ^ 0x51ED270Bu);
+    swarmRng.seed (seed ^ 0x2545F491u);
+    seedCells (p);
+    initSwarm (p);
+
     updateControl (p, ctx, 0);
     gainL = gainLTarget;
     gainR = gainRTarget;
@@ -330,6 +414,13 @@ LayerParams Voice::applyModulation (const LayerParams& p, const ModContext& ctx,
     apply (m.wtPos, ranges::wtPos, kDstWtPos);
     apply (m.wtWarp, ranges::wtWarp, kDstWtWarp);
     apply (m.pan, ranges::pan, kDstPan);
+    apply (m.cellSpeed, ranges::cellSpeed, kDstCellSpeed);
+    apply (m.cellTilt, ranges::cellTilt, kDstCellTilt);
+    apply (m.cellMutate, ranges::cellMutate, kDstCellMutate);
+    apply (m.swarmPull, ranges::swarmPull, kDstSwarmPull);
+    apply (m.swarmChaos, ranges::swarmChaos, kDstSwarmChaos);
+    apply (m.swarmFlock, ranges::swarmFlock, kDstSwarmFlock);
+    apply (m.swarmSpread, ranges::swarmSpread, kDstSwarmSpread);
 
     // Volume: the layer level, scaled by modulation (0x .. 2x).
     m.volume = std::pow (10.0f, m.volume / 20.0f) * std::clamp (1.0f + sum[kDstVolume], 0.0f, 2.0f);
@@ -373,8 +464,6 @@ void Voice::updateWavetable (const LayerParams& m, const ModContext& ctx, float 
     wtFrameTarget = std::clamp (m.wtPos, 0.0f, 1.0f) * (float) (table->numFrames() - 1);
     wtFrameStep = (wtFrameTarget - wtFrame) / (float) kControlInterval;
 
-    subInc = std::min (0.45f, f0 * 0.5f * invSr);
-    subLevel = m.wtSub;
     wtGain = 1.0f / std::sqrt ((float) wtCount);
 }
 
@@ -401,17 +490,387 @@ void Voice::renderWavetable (float& outL, float& outR, float& mono, const ModCon
     outL *= wtGain;
     outR *= wtGain;
     mono *= wtGain;
+}
 
-    if (subLevel > 0.001f)
+void Voice::renderSub (float& outL, float& outR, float& mono)
+{
+    if (subLevel <= 0.001f)
+        return;
+    subPhase += subInc;
+    if (subPhase >= 1.0f)
+        subPhase -= 1.0f;
+    const float sub = fastSin (subPhase) * subLevel;
+    outL += sub * 0.7071f;
+    outR += sub * 0.7071f;
+    mono += sub;
+}
+
+void Voice::renderSource (int source, float& outL, float& outR, float& mono, const ModContext& ctx)
+{
+    switch (source)
     {
-        subPhase += subInc;
-        if (subPhase >= 1.0f)
-            subPhase -= 1.0f;
-        const float sub = std::sin (kTwoPi * subPhase) * subLevel;
-        outL += sub * 0.7071f;
-        outR += sub * 0.7071f;
-        mono += sub;
+        case kLayerWavetable: renderWavetable (outL, outR, mono, ctx); break;
+        case kLayerCells:     renderCells (outL, outR, mono); break;
+        case kLayerSwarm:     renderSwarm (outL, outR, mono); break;
+        default:              outL = outR = mono = 0.0f; return;
     }
+    renderSub (outL, outR, mono);
+}
+
+//==============================================================================
+// Cells
+
+void Voice::seedCells (const LayerParams& p)
+{
+    grid.fill (0u);
+    auto set = [this] (int x, int y)
+    {
+        x = ((x % kCellCols) + kCellCols) % kCellCols;
+        y = ((y % kCellRows) + kCellRows) % kCellRows;
+        grid[(size_t) y] |= 1u << x;
+    };
+    auto place = [&set] (std::initializer_list<std::pair<int, int>> cells, int ox, int oy)
+    {
+        for (auto [x, y] : cells)
+            set (ox + x, oy + y);
+    };
+    auto randomX = [this] { return (int) (cellRng.uniform() * kCellCols); };
+    auto randomY = [this] { return (int) (cellRng.uniform() * kCellRows); };
+    const float density = std::clamp (p.cellDensity, 0.0f, 1.0f);
+
+    switch (p.cellSeed)
+    {
+        case kSeedGliders:
+            for (int g = 0, n = 1 + (int) (density * 5.0f); g < n; ++g)
+                place ({ { 1, 0 }, { 2, 1 }, { 0, 2 }, { 1, 2 }, { 2, 2 } }, randomX(), randomY());
+            break;
+        case kSeedRPentomino:
+            place ({ { 1, 0 }, { 2, 0 }, { 0, 1 }, { 1, 1 }, { 1, 2 } }, 15, 7);
+            break;
+        case kSeedAcorn:
+            place ({ { 1, 0 }, { 3, 1 }, { 0, 2 }, { 1, 2 }, { 4, 2 }, { 5, 2 }, { 6, 2 } }, 12, 6);
+            break;
+        case kSeedSymmetric:
+            for (int y = 0; y < kCellRows; ++y)
+                for (int x = 0; x < kCellCols / 2; ++x)
+                    if (cellRng.uniform() < density)
+                    {
+                        set (x, y);
+                        set (kCellCols - 1 - x, y);
+                    }
+            break;
+        case kSeedSpaceships:
+            for (int g = 0, n = 1 + (int) (density * 2.0f); g < n; ++g)
+                place ({ { 1, 0 }, { 4, 0 }, { 0, 1 }, { 0, 2 }, { 4, 2 }, { 0, 3 }, { 1, 3 }, { 2, 3 }, { 3, 3 } },
+                       randomX(), (g * 6 + randomY() / 3) % kCellRows);
+            break;
+        default:
+            for (int y = 0; y < kCellRows; ++y)
+                for (int x = 0; x < kCellCols; ++x)
+                    if (cellRng.uniform() < density)
+                        set (x, y);
+            break;
+    }
+
+    if (std::all_of (grid.begin(), grid.end(), [] (uint32_t r) { return r == 0u; }))
+        place ({ { 1, 0 }, { 2, 0 }, { 0, 1 }, { 1, 1 }, { 1, 2 } }, 15, 7); // never start empty
+
+    cellClock = 0.0;
+    cellFade = 1.0f;
+    cellsDirty = true;
+}
+
+void Voice::stepCells (const LayerParams& m)
+{
+    const auto masks = ruleMasks (m.cellRule);
+    std::array<uint32_t, kCellRows> next {};
+
+    for (int y = 0; y < kCellRows; ++y)
+    {
+        const uint32_t up = grid[(size_t) ((y + kCellRows - 1) % kCellRows)];
+        const uint32_t mid = grid[(size_t) y];
+        const uint32_t down = grid[(size_t) ((y + 1) % kCellRows)];
+        uint32_t row = 0;
+        for (int x = 0; x < kCellCols; ++x)
+        {
+            const int xl = (x + kCellCols - 1) % kCellCols;
+            const int xr = (x + 1) % kCellCols;
+            auto bit = [] (uint32_t r, int i) { return (int) ((r >> i) & 1u); };
+            const int n = bit (up, xl) + bit (up, x) + bit (up, xr) + bit (mid, xl) + bit (mid, xr)
+                          + bit (down, xl) + bit (down, x) + bit (down, xr);
+            const bool alive = bit (mid, x) != 0;
+            if (alive ? ((masks.survive >> n) & 1u) : ((masks.birth >> n) & 1u))
+                row |= 1u << x;
+        }
+        next[(size_t) y] = row;
+    }
+    grid = next;
+
+    // Mutation: flip a few random cells to keep things moving.
+    const float mutate = std::clamp (m.cellMutate, 0.0f, 1.0f);
+    if (mutate > 0.0f && cellRng.uniform() < 0.3f + 0.7f * mutate)
+    {
+        const int flips = 1 + (int) (mutate * 6.0f);
+        for (int f = 0; f < flips; ++f)
+            grid[(size_t) ((int) (cellRng.uniform() * kCellRows) % kCellRows)] ^= 1u << ((int) (cellRng.uniform() * kCellCols) % kCellCols);
+    }
+
+    // A dead grid comes back to life so the note keeps sounding.
+    if (std::all_of (grid.begin(), grid.end(), [] (uint32_t r) { return r == 0u; }))
+    {
+        LayerParams reseed = m;
+        reseed.cellSeed = kSeedRandom;
+        reseed.cellDensity = std::max (0.25f, m.cellDensity);
+        seedCells (reseed);
+    }
+}
+
+void Voice::buildCellWave (float f0)
+{
+    // Columns -> harmonics (amplitude = how many cells are alive in the column),
+    // rows -> stereo position (centre of the live cells in the column).
+    std::array<float, kCellCols> amp {}, gL {}, gR {};
+    float sumSq = 0.0f;
+    const float nyquist = 0.45f * (float) sr;
+    for (int x = 0; x < kCellCols; ++x)
+    {
+        int count = 0, rowSum = 0;
+        for (int y = 0; y < kCellRows; ++y)
+            if ((grid[(size_t) y] >> x) & 1u)
+            {
+                ++count;
+                rowSum += y;
+            }
+        const int h = x + 1;
+        if (count == 0 || f0 * (float) h >= nyquist)
+            continue;
+        const float a = (float) count / (float) kCellRows * std::pow ((float) h, -cellTiltNow);
+        const float pan = (float) rowSum / (float) count / (float) (kCellRows - 1) * 2.0f - 1.0f;
+        const float angle = (pan * 0.9f + 1.0f) * kPi * 0.25f;
+        amp[(size_t) x] = a;
+        gL[(size_t) x] = std::cos (angle);
+        gR[(size_t) x] = std::sin (angle);
+        sumSq += a * a;
+    }
+
+    // Keep the level steady as the population changes.
+    const float norm = 0.5f / std::sqrt (sumSq * 0.5f + 0.002f);
+
+    cellWaveL[0] = cellWaveL[1];
+    cellWaveR[0] = cellWaveR[1];
+    auto& wl = cellWaveL[1];
+    auto& wr = cellWaveR[1];
+    wl.fill (0.0f);
+    wr.fill (0.0f);
+    const auto& sine = sineTable();
+    constexpr int step = kSineSize / kCellTable;
+    for (int x = 0; x < kCellCols; ++x)
+    {
+        const float a = amp[(size_t) x] * norm;
+        if (a <= 0.0f)
+            continue;
+        const float al = a * gL[(size_t) x], ar = a * gR[(size_t) x];
+        const int h = x + 1;
+        for (int n = 0; n < kCellTable; ++n)
+        {
+            const float s = sine[(size_t) (((h * n) % kCellTable) * step)];
+            wl[(size_t) n] += al * s;
+            wr[(size_t) n] += ar * s;
+        }
+    }
+    wl[kCellTable] = wl[0];
+    wr[kCellTable] = wr[0];
+}
+
+void Voice::updateCells (const LayerParams& m, const ModContext& ctx, float f0)
+{
+    const int sync = std::clamp (m.cellSync, 0, kNumSyncOptions - 1);
+    const float gensPerSecond = sync > 0 ? (float) (ctx.bpm / 60.0 / kSyncBeats[sync]) : std::max (0.05f, m.cellSpeed);
+    cellTiltNow = std::clamp (m.cellTilt, 0.0f, 2.0f);
+    cellInc = std::min (0.45f, f0 * invSr);
+
+    if (cellsDirty)
+    {
+        buildCellWave (f0);
+        cellWaveL[0] = cellWaveL[1];
+        cellWaveR[0] = cellWaveR[1];
+        cellF0 = f0;
+        cellsDirty = false;
+    }
+
+    cellClock += (double) gensPerSecond * kControlInterval * invSr;
+    for (int guard = 0; cellClock >= 1.0 && guard < 4; ++guard)
+    {
+        cellClock -= 1.0;
+        stepCells (m);
+        buildCellWave (f0);
+        cellF0 = f0;
+        const float periodSamples = (float) sr / gensPerSecond;
+        cellFade = 0.0f;
+        cellFadeInc = 1.0f / std::max (1.0f, std::clamp (m.cellGlide, 0.0f, 1.0f) * periodSamples);
+    }
+    if (cellClock >= 1.0)
+        cellClock = 0.0;
+
+    // A big pitch change (e.g. pitch bend) can push harmonics past Nyquist: rebuild.
+    if (std::fabs (f0 - cellF0) > cellF0 * 0.06f)
+    {
+        buildCellWave (f0);
+        cellWaveL[0] = cellWaveL[1];
+        cellWaveR[0] = cellWaveR[1];
+        cellF0 = f0;
+    }
+}
+
+void Voice::renderCells (float& outL, float& outR, float& mono)
+{
+    cellPhase += cellInc;
+    if (cellPhase >= 1.0f)
+        cellPhase -= 1.0f;
+    const float pos = cellPhase * (float) kCellTable;
+    const int i = std::min ((int) pos, kCellTable - 1);
+    const float t = pos - (float) i;
+
+    auto read = [i, t] (const std::array<float, kCellTable + 1>& w) { return w[(size_t) i] + (w[(size_t) i + 1] - w[(size_t) i]) * t; };
+    const float l1 = read (cellWaveL[1]), r1 = read (cellWaveR[1]);
+    if (cellFade < 1.0f)
+    {
+        const float l0 = read (cellWaveL[0]), r0 = read (cellWaveR[0]);
+        outL = l0 + (l1 - l0) * cellFade;
+        outR = r0 + (r1 - r0) * cellFade;
+        cellFade = std::min (1.0f, cellFade + cellFadeInc);
+    }
+    else
+    {
+        outL = l1;
+        outR = r1;
+    }
+    mono = (outL + outR) * 0.7071f;
+}
+
+//==============================================================================
+// Swarm
+
+void Voice::initSwarm (const LayerParams& p)
+{
+    for (int i = 0; i < kMaxParticles; ++i)
+    {
+        auto& q = particles[(size_t) i];
+        q.x = swarmHomeX (p.swarmHome, i, kMaxParticles) * p.swarmSpread * 2.0f + 0.3f * swarmRng.bipolar();
+        q.y = swarmRng.bipolar();
+        q.vx = q.vy = 0.0f;
+        q.phase = swarmRng.uniform();
+    }
+}
+
+void Voice::updateSwarm (const LayerParams& m, const ModContext&, float f0, float dt)
+{
+    particleCount = 4 << std::clamp (m.swarmCount, 0, 3);
+    swarmWave = m.swarmWave;
+
+    const float pull = std::clamp (m.swarmPull, 0.0f, 1.0f);
+    const float chaos = std::clamp (m.swarmChaos, 0.0f, 1.0f);
+    const float flock = std::clamp (m.swarmFlock, -1.0f, 1.0f);
+    const float stretch = std::clamp (m.swarmSpread, 0.0f, 1.0f) * 2.0f; // 1 = exact home notes
+    const float stiffness = 4.0f + 120.0f * pull * pull;
+    const float damping = 1.0f + 0.7f * std::sqrt (stiffness);
+    const float kick = chaos * chaos * 60.0f + chaos * 4.0f;
+    const float step = dt * std::max (0.01f, m.swarmSpeed);
+    const float decay = std::exp (-damping * step);
+
+    float meanX = 0.0f, meanY = 0.0f;
+    for (int i = 0; i < particleCount; ++i)
+    {
+        meanX += particles[(size_t) i].x;
+        meanY += particles[(size_t) i].y;
+    }
+    meanX /= (float) particleCount;
+    meanY /= (float) particleCount;
+
+    float weightSq = 0.0f;
+    const float nyquist = 0.45f * (float) sr;
+    for (int i = 0; i < particleCount; ++i)
+    {
+        auto& q = particles[(size_t) i];
+        q.homeX = swarmHomeX (m.swarmHome, i, particleCount) * stretch;
+        q.homeY = particleCount > 1 ? (float) ((i * 7) % particleCount) / (float) (particleCount - 1) * 1.6f - 0.8f : 0.0f;
+
+        // Spring toward home, random kicks, and flocking toward (or away from) the crowd.
+        const float noiseX = (swarmRng.bipolar() + swarmRng.bipolar()) * 0.5f;
+        const float noiseY = (swarmRng.bipolar() + swarmRng.bipolar()) * 0.5f;
+        const float ax = stiffness * (q.homeX - q.x) + kick * noiseX + flock * 10.0f * (meanX - q.x);
+        const float ay = stiffness * 0.5f * (q.homeY - q.y) + kick * noiseY + flock * 10.0f * (meanY - q.y);
+        q.vx = (q.vx + ax * step) * decay;
+        q.vy = (q.vy + ay * step) * decay;
+        q.x += q.vx * step;
+        q.y += q.vy * step;
+
+        if (q.x < -3.0f) { q.x = -3.0f; q.vx = std::fabs (q.vx) * 0.5f; }
+        if (q.x > 5.0f)  { q.x = 5.0f;  q.vx = -std::fabs (q.vx) * 0.5f; }
+        if (q.y < -1.0f) { q.y = -1.0f; q.vy = std::fabs (q.vy) * 0.5f; }
+        if (q.y > 1.0f)  { q.y = 1.0f;  q.vy = -std::fabs (q.vy) * 0.5f; }
+
+        const float freq = f0 * std::exp2 (q.x);
+        q.inc = std::min (0.45f, freq * invSr);
+        const float weight = m.swarmHome == kHomeHarmonics ? 1.0f / std::sqrt ((float) (i + 1)) : 1.0f;
+        q.amp = (freq < nyquist && freq > 15.0f) ? weight : 0.0f;
+        weightSq += q.amp * q.amp;
+
+        const float angle = (q.y * 0.9f + 1.0f) * kPi * 0.25f;
+        q.panL = std::cos (angle);
+        q.panR = std::sin (angle);
+    }
+
+    const float norm = weightSq > 0.0f ? 1.0f / std::sqrt (weightSq) : 0.0f;
+    for (int i = 0; i < particleCount; ++i)
+        particles[(size_t) i].amp *= norm;
+}
+
+void Voice::renderSwarm (float& outL, float& outR, float& mono)
+{
+    outL = outR = 0.0f;
+    const float wave = std::clamp (swarmWave, 0.0f, 1.0f) * 2.0f;
+    for (int i = 0; i < particleCount; ++i)
+    {
+        auto& q = particles[(size_t) i];
+        if (q.amp <= 0.0f)
+            continue;
+        q.phase += q.inc;
+        if (q.phase >= 1.0f)
+            q.phase -= 1.0f;
+
+        float s = fastSin (q.phase);
+        if (wave > 0.001f)
+        {
+            const float tri = 1.0f - 4.0f * std::fabs (q.phase - 0.5f);
+            if (wave <= 1.0f)
+                s += (tri - s) * wave;
+            else
+            {
+                const float saw = 2.0f * q.phase - 1.0f - polyBlep (q.phase, q.inc);
+                s = tri + (saw - tri) * (wave - 1.0f);
+            }
+        }
+        outL += s * q.amp * q.panL;
+        outR += s * q.amp * q.panR;
+    }
+    mono = (outL + outR) * 0.7071f;
+}
+
+void Voice::publish (const ModContext& ctx)
+{
+    if (ctx.display == nullptr || age != ctx.newestAge)
+        return;
+    for (int y = 0; y < kCellRows; ++y)
+        ctx.display->cells[(size_t) y].store (grid[(size_t) y], std::memory_order_relaxed);
+    for (int i = 0; i < particleCount; ++i)
+    {
+        const auto& q = particles[(size_t) i];
+        const auto px = (uint32_t) std::clamp ((q.x + 3.0f) / 8.0f * 65535.0f, 0.0f, 65535.0f);
+        const auto py = (uint32_t) std::clamp ((q.y + 1.0f) * 0.5f * 65535.0f, 0.0f, 65535.0f);
+        ctx.display->particles[(size_t) i].store ((px << 16) | py, std::memory_order_relaxed);
+    }
+    ctx.display->particleCount.store (particleCount, std::memory_order_relaxed);
 }
 
 void Voice::updateControl (const LayerParams& p, const ModContext& ctx, int sampleInCall)
@@ -454,11 +913,21 @@ void Voice::updateControl (const LayerParams& p, const ModContext& ctx, int samp
     ampAttackCoef = 1.0f - std::exp (-1.0f / (std::max (0.0005f, m.attack / 1.79f) * (float) sr));
     ampDecayCoef = 1.0f - std::exp (-1.0f / (std::max (0.005f, m.ampDecay / 3.0f) * (float) sr));
     ampReleaseCoef = 1.0f - std::exp (-1.0f / (std::max (0.005f, m.release / 3.0f) * (float) sr));
-    ampSustain = type == kLayerWavetable ? std::clamp (m.ampSustain, 0.0f, 1.0f) : 1.0f;
+    ampSustain = type != kLayerPhysical ? std::clamp (m.ampSustain, 0.0f, 1.0f) : 1.0f;
 
-    if (type == kLayerWavetable)
-    {
+    subInc = std::min (0.45f, f0 * 0.5f * invSr);
+    subLevel = m.wtSub;
+
+    const int source = type != kLayerPhysical ? type : borrowedSource (m.exciter);
+    if (source == kLayerWavetable)
         updateWavetable (m, ctx, f0);
+    else if (source == kLayerCells)
+        updateCells (m, ctx, f0);
+    else if (source == kLayerSwarm)
+        updateSwarm (m, ctx, f0, dt);
+
+    if (type != kLayerPhysical)
+    {
         numLive = 0;
     }
     else
@@ -474,8 +943,6 @@ void Voice::updateControl (const LayerParams& p, const ModContext& ctx, int samp
             const float cents = spread * m.detune * 50.0f;
             oscInc[(size_t) u] = std::min (0.45f, f0 * std::exp2 (cents / 1200.0f) * invSr);
         }
-        if (m.exciter == kExcWavetable)
-            updateWavetable (m, ctx, f0);
 
         const float t = (float) sampleCount * invSr;
         const float evolveTime = std::max (0.02f, m.evolve);
@@ -620,7 +1087,8 @@ void Voice::render (float* left, float* right, int numSamples, const LayerParams
             updateControl (p, ctx, i);
             controlCounter = kControlInterval;
 
-            const bool continuous = type == kLayerWavetable || isContinuous (p.exciter);
+            const bool continuous = type != kLayerPhysical || isContinuous (p.exciter);
+            publish (ctx);
 
             float energy = 0.0f;
             for (int j = 0; j < numLive; ++j)
@@ -628,7 +1096,7 @@ void Voice::render (float* left, float* right, int numSamples, const LayerParams
                 const auto jj = (size_t) j;
                 energy += (zr[jj] * zr[jj] + zi[jj] * zi[jj]) * gain[jj] * gain[jj];
             }
-            level = type == kLayerWavetable ? ampEnv : energy;
+            level = type != kLayerPhysical ? ampEnv : energy;
 
             if (type == kLayerPhysical && continuous && (keyDown || sustained) && ! fading)
             {
@@ -647,7 +1115,7 @@ void Voice::render (float* left, float* right, int numSamples, const LayerParams
             blockIn = blockOut = 0.0f;
 
             const bool held = keyDown || sustained;
-            if (type == kLayerWavetable)
+            if (type != kLayerPhysical)
             {
                 if (! held && ampStage == 2 && ampEnv < 1.0e-4f)
                 {
@@ -685,11 +1153,12 @@ void Voice::render (float* left, float* right, int numSamples, const LayerParams
 
         float outL = 0.0f, outR = 0.0f;
 
-        if (type == kLayerWavetable)
+        if (type != kLayerPhysical)
         {
             float wl, wr, mono;
-            renderWavetable (wl, wr, mono, ctx);
-            const float a = ampEnv * velocity * kWavetableGain;
+            renderSource (type, wl, wr, mono, ctx);
+            const float engineGain = type == kLayerWavetable ? kWavetableGain : type == kLayerCells ? kCellsGain : kSwarmGain;
+            const float a = ampEnv * velocity * engineGain;
             outL = wl * a;
             outR = wr * a;
         }
@@ -718,10 +1187,10 @@ void Voice::render (float* left, float* right, int numSamples, const LayerParams
                     eN = amount * rng.bipolar();
                     dryL = dryR = eN * 0.5f;
                 }
-                else if (p.exciter == kExcWavetable)
+                else if (borrowedSource (p.exciter) >= 0)
                 {
                     float wl, wr, mono;
-                    renderWavetable (wl, wr, mono, ctx);
+                    renderSource (borrowedSource (p.exciter), wl, wr, mono, ctx);
                     eT = mono * amount;
                     dryL = wl * amount;
                     dryR = wr * amount;
@@ -841,6 +1310,8 @@ bool LayerEngine::accepts (int note, float velocity) const
 ModContext LayerEngine::context (const ModContext& shared, double bpm, bool hostPlaying, double ppq) const
 {
     ModContext ctx = shared;
+    ctx.bpm = bpm;
+    ctx.newestAge = newestAge();
     for (int l = 0; l < kNumLfos; ++l)
     {
         const auto ll = (size_t) l;
@@ -962,6 +1433,15 @@ void LayerEngine::render (float* left, float* right, int numSamples, const ModCo
         freePhase[(size_t) l] = ctx.lfoPhase[(size_t) l] + (double) ctx.lfoHz[(size_t) l] * numSamples / sr;
 }
 
+uint64_t LayerEngine::newestAge() const
+{
+    uint64_t newest = 0;
+    for (auto& v : voices)
+        if (v.active && v.age > newest)
+            newest = v.age;
+    return newest;
+}
+
 bool LayerEngine::anyActive() const
 {
     for (auto& v : voices)
@@ -1029,6 +1509,7 @@ void Engine::noteOn (int note, float velocity)
         {
             ModContext ctx = layer.context (shared, bpm, hostPlaying, ppq);
             ctx.table = tableFor (i);
+            ctx.display = &displays[(size_t) i];
             layer.noteOn (note, velocity, ctx);
         }
     }
@@ -1079,6 +1560,7 @@ void Engine::render (float* left, float* right, int numSamples)
 
         ModContext ctx = layer.context (shared, bpm, hostPlaying, ppq);
         ctx.table = tableFor (i);
+        ctx.display = &displays[(size_t) i];
         layer.render (left, right, numSamples, ctx);
     }
 

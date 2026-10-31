@@ -56,6 +56,9 @@ public:
     juce::String getImportedName (int layer) const;
     static juce::StringArray wavetableChoices();
 
+    // Live cell grid / particles of a layer's newest note, for the UI.
+    const impossible::LayerDisplay& getDisplay (int layer) const { return engine.display (layer); }
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
     juce::AudioProcessorValueTreeState apvts;

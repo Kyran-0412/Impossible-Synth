@@ -21,14 +21,16 @@ Every sound has **4 layers**. Each layer is its own synth, with its own engine, 
 
 - **Physical**: hit, pluck, bow or blow into a virtual object (the original Impossible engine).
 - **Wavetable**: scan through wavetables, with warps, unison and a sub oscillator.
+- **Cells**: a Game of Life grid that plays itself. Living cells become overtones, and the sound changes as the patterns grow and die.
+- **Swarm**: a flock of particles, each one a tiny oscillator, pulled toward "home" notes and knocked around by chaos.
 
-Use the tabs at the top: **MIX** shows all four layers side by side, and **LAYER 1-4** open each layer's page. Click a tab's dot to switch that layer on or off. The **Engine** box (top right) changes the selected layer between Physical and Wavetable.
+Use the tabs at the top: **MIX** shows all four layers side by side, and **LAYER 1-4** open each layer's page. Click a tab's dot to switch that layer on or off. The **Engine** box (top right) changes the selected layer's engine.
 
 **Mix page**, per layer: on/off, engine, **Volume**, **Pan**, **Fine** tune, **Octave**, **Key Low/High** (keyboard splits) and **Vel Low/High** (velocity switching), plus **Edit** to jump to its page.
 
 **How layers link**
 - **Macros**: the 4 Macro knobs at the bottom are sources in every layer's Matrix, so one knob can move several layers at once. For example, Macro 1 can fade one layer in while turning another layer's material from glass to wood.
-- **Wavetable into Object**: set a Physical layer's **Exciter** to **Wavetable**. The wavetable is then played *through* the object. Click **Edit Wavetable** to choose the table.
+- **Other engines into the Object**: set a Physical layer's **Exciter** to **Wavetable**, **Cells** or **Swarm**. That engine is then played *through* the object. Click **Edit Wavetable / Cells / Swarm** to set it up.
 - **Splits and switches**: key and velocity ranges per layer.
 - **Stacks**: switch on several layers and detune them with Fine or spread them with Pan.
 
@@ -42,9 +44,24 @@ Sounds and songs saved with earlier versions load into layer 1, unchanged.
 
 Wavetable page controls: **Table**, **Position** (scan through frames), **Warp** mode (Bend, Sync, Mirror, Squeeze, Fold, Crush, FM) and **Warp Amt**, **Unison** (up to 7), **Detune**, **Spread**, **Sub**, and an **Amp** envelope (Attack, Decay, Sustain, Release).
 
+## Cells (Game of Life)
+
+Each note starts its own grid, 32 columns by 16 rows, which keeps evolving while the note is held:
+
+- **Columns are harmonics.** The more cells alive in column 1, the louder the fundamental; column 2 is the 2nd harmonic, and so on up to 32. A glider crawling across the grid becomes an overtone sweeping up the spectrum.
+- **Rows are stereo.** Cells near the top lean left, cells near the bottom lean right.
+
+Controls: **Rule** (Life, HighLife, Seeds, Day & Night, Maze, Anneal: each grows differently), **Seed** (the starting pattern: Random, Gliders, R-Pentomino, Acorn, Symmetric, Spaceships), **Density**, **Speed** (generations per second) or **Sync** (step in time with the song), **Glide** (smooth blend between generations, or hard steps at 0), **Tilt** (darker or brighter), **Mutate** (randomly flips cells so life never settles), **Sub**, and the **Amp** envelope. If every cell dies, the grid reseeds itself so the note keeps sounding. The display shows the newest note's grid live.
+
+## Swarm (particles)
+
+Up to 32 particles move around while the note is held. Each one is a small oscillator: **left/right in the display is pitch**, and **up/down is stereo position**.
+
+Controls: **Particles** (4 to 32), **Home** (the notes they're drawn to: Unison, Harmonics, Octaves, Fifths, Chord, Cluster), **Pull** (gravity toward home: high gives a clean tone, low a free-floating cloud), **Chaos** (random kicks), **Flock** (right makes them clump together, left scatters them), **Spread** (squeeze the home notes together or stretch them apart; the middle is exact), **Speed**, **Wave** (Sine, Triangle, Saw), **Sub**, and the **Amp** envelope. Try a Mod Env or Macro on **Pull** to make a sound start as chaos and settle into a chord, or the reverse.
+
 ## Presets
 
-The bar at the top has 38 factory presets: keys, plucks, pads, basses, leads, textures, wavetable sounds and layered stacks. Use **<** and **>** to step through them. FL Studio's own preset menu lists them too.
+The bar at the top has 51 factory presets: keys, plucks, pads, basses, leads, textures, wavetable, Cells and Swarm sounds, and layered stacks. Use **<** and **>** to step through them. FL Studio's own preset menu lists them too.
 
 - **Save** stores the current sound in `Documents\Impossible Synth\Presets`. Saved sounds appear under **User** in the preset list.
 - **Randomize** rolls a new random sound, often with two or three layers. It's tuned to give usable results rather than pure noise.
@@ -52,7 +69,7 @@ The bar at the top has 38 factory presets: keys, plucks, pads, basses, leads, te
 ## Physical layer controls
 
 **Excite**: how you play the object
-- **Exciter**: Strike (mallet), Pluck, Bow, Breath, **Osc** (a normal synth oscillator fed into the object) or **Wavetable** (the layer's wavetable fed into the object). Bow, Breath, Osc and Wavetable keep sounding while you hold the key.
+- **Exciter**: Strike (mallet), Pluck, Bow, Breath, **Osc** (a normal synth oscillator fed into the object), or **Wavetable**, **Cells** or **Swarm** (that engine fed into the object). All except Strike and Pluck keep sounding while you hold the key.
 - **Attack**: fade-in time for Bow, Breath and Osc.
 - **Hardness**: mallet hardness / brightness. Key velocity adds to it.
 - **Position**: where you hit the object. This changes which overtones ring.
@@ -73,16 +90,16 @@ The bar at the top has 38 factory presets: keys, plucks, pads, basses, leads, te
 - **Fracture**: overtones split apart and beat against each other, like the object cracking.
 - **Evolve**: how fast Bloom, Drift, Transmute and Fracture happen.
 
-**Filter & Drive** (both layer types): applied to each note
+**Filter & Drive** (all layer types): applied to each note
 - **Filter**: Off, Low Pass, Band Pass, High Pass or Notch, with **Cutoff** and **Resonance**.
 - **Env Amt**: how much the Mod Env sweeps the cutoff.
 - **Drive**: distortion before the filter.
 - **Body**: how much of the sound goes through the object. Turn it down to hear the raw oscillator, bow or breath. Useful for basses and leads.
 
-**Modulation** (both layer types): make things move
+**Modulation** (all layer types): make things move
 - **LFO 1 / LFO 2**: Sine, Triangle, Saw Up/Down, Square, S&H (random steps) or Drift (smooth random). **Sync** locks the LFO to the song tempo. **Mode** is Free (all notes share one LFO) or Retrig (restarts with each note).
 - **Mod Env**: an ADSR envelope that starts with each note.
-- **Matrix**: six slots. Each one routes a **source** (LFO 1, LFO 2, Mod Env, Velocity, Mod Wheel, Note, Random, Macro 1-4) to a **target** (Pitch, Volume, Pan, any Excite/Object/Impossible knob, WT Position, WT Warp, Cutoff, Resonance, Drive, Body) with an **amount**. For example, LFO 1 → Material makes the object wobble between wood and glass.
+- **Matrix**: six slots. Each one routes a **source** (LFO 1, LFO 2, Mod Env, Velocity, Mod Wheel, Note, Random, Macro 1-4) to a **target** (Pitch, Volume, Pan, any Excite/Object/Impossible knob, WT Position, WT Warp, Cell Speed/Tilt/Mutate, Swarm Pull/Chaos/Flock/Spread, Cutoff, Resonance, Drive, Body) with an **amount**. For example, LFO 1 → Material makes the object wobble between wood and glass.
 
 **Global** (bottom strip)
 - **Macro 1-4**: see *How layers link*.
