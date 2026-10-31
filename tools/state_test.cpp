@@ -20,13 +20,21 @@ static float value (ImpossibleSynthProcessor& p, const juce::String& id)
     return p.apvts.getRawParameterValue (id)->load();
 }
 
+// Processors are big (every voice owns its buffers), so they go on the heap
+// like a DAW would create them: Windows only gives a program 1 MB of stack.
+static std::unique_ptr<ImpossibleSynthProcessor> makeProcessor()
+{
+    return std::make_unique<ImpossibleSynthProcessor>();
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
 
     // 1. A v0.2-style state: no "version", unprefixed IDs.
     {
-        ImpossibleSynthProcessor p;
+        auto owner = makeProcessor();
+        auto& p = *owner;
         p.setCurrentProgram (35); // something with several layers on, to prove they get switched off
 
         juce::XmlElement xml ("ImpossibleSynth");
@@ -63,7 +71,9 @@ int main()
 
     // 2. Round trip of a new layered state.
     {
-        ImpossibleSynthProcessor a, b;
+        auto ownerA = makeProcessor(), ownerB = makeProcessor();
+        auto& a = *ownerA;
+        auto& b = *ownerB;
         a.setCurrentProgram (35);
         juce::MemoryBlock block;
         a.getStateInformation (block);
@@ -80,7 +90,8 @@ int main()
 
     // 3. Every factory preset applies without leaving stray layers on.
     {
-        ImpossibleSynthProcessor p;
+        auto owner = makeProcessor();
+        auto& p = *owner;
         bool ok = true;
         for (int i = 0; i < p.getNumPrograms(); ++i)
         {

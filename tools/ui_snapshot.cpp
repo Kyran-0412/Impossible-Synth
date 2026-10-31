@@ -13,7 +13,9 @@ int main (int argc, char** argv)
                                       : juce::File::getCurrentWorkingDirectory());
     outDir.createDirectory();
 
-    ImpossibleSynthProcessor processor;
+    // On the heap, like a DAW creates it (it's too big for Windows' 1 MB stack).
+    auto processorOwner = std::make_unique<ImpossibleSynthProcessor>();
+    auto& processor = *processorOwner;
     if (argc > 2)
         processor.setCurrentProgram (juce::String (argv[2]).getIntValue());
 
